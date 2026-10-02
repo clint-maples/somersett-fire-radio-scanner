@@ -1,22 +1,78 @@
 'use strict';
 
-const STORAGE_KEY = 'broadcastify-scanner-feeds-v1';
+const STORAGE_KEY = 'broadcastify-scanner-feeds-v2';
+const LEGACY_STORAGE_KEY = 'broadcastify-scanner-feeds-v1';
 
 /** Tiny silent WAV — used to unlock HTMLMediaElement under a user gesture. */
 const SILENT_WAV =
   'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAACJWAAACABAAZGF0YQAAAAA=';
 
+const CALLS_SYSTEM = '11341';
+
+function callsUrl(tg) {
+  return `https://www.broadcastify.com/calls/tg/${CALLS_SYSTEM}/${tg}`;
+}
+
+function callsLink(tg, label) {
+  return { talkgroup: String(tg), label, url: callsUrl(tg) };
+}
+
+/**
+ * Calls entries are deep links, not listen feed IDs.
+ * Talkgroups 30433–30438 must never be sent to the HLS scraper.
+ */
 const DEFAULT_FEEDS = [
   {
+    kind: 'calls',
+    feedId: 'calls-11341-30433',
+    name: 'NSRS Washoe TMFPD Red Dispatch',
+    region: 'nevada',
+    callsLinks: [callsLink('30433', 'Red Dispatch')],
+  },
+  {
+    kind: 'calls',
+    feedId: 'calls-11341-command',
+    name: 'TMFPD Command 1 + Command 2',
+    region: 'nevada',
+    callsLinks: [callsLink('30434', 'Command 1'), callsLink('30435', 'Command 2')],
+  },
+  {
+    kind: 'calls',
+    feedId: 'calls-11341-tac',
+    name: 'TMFPD Tac 4–6',
+    region: 'nevada',
+    callsLinks: [
+      callsLink('30436', 'Tac 4'),
+      callsLink('30437', 'Tac 5'),
+      callsLink('30438', 'Tac 6'),
+    ],
+  },
+  {
+    kind: 'listen',
+    feedId: '7364',
+    name: 'Reno and Sparks Police and Fire',
+    region: 'nevada',
+  },
+  {
+    kind: 'listen',
     feedId: '14826',
     name: 'East Placer and Nevada Counties CAL FIRE NEU - Kings Beach Area',
+    region: 'california',
   },
-  { feedId: '47365', name: 'CAL FIRE NEU West' },
-  { feedId: '47367', name: 'Tahoe National Forest West' },
+  { kind: 'listen', feedId: '47365', name: 'CAL FIRE NEU West', region: 'california' },
+  { kind: 'listen', feedId: '47367', name: 'Tahoe National Forest West', region: 'california' },
 ];
 
-/** @type {Map<string, FeedPlayer>} */
+const SECTION_TITLES = {
+  nevada: 'Nevada / Washoe',
+  california: 'California / NEU–TNF',
+};
+
+/** @type {Map<string, FeedPlayer|CallsCard>} */
 const players = new Map();
+
+/** @type {Map<string, HTMLElement>} */
+const sectionNodes = new Map();
 
 /** @type {AudioContext|null} */
 let sharedAudioCtx = null;
@@ -36,6 +92,7 @@ function ensureSharedAudioCtx() {
 const els = {
   grid: document.getElementById('feed-grid'),
   tpl: document.getElementById('feed-card-tpl'),
+  callsTpl: document.getElementById('calls-card-tpl'),
   playAll: document.getElementById('btn-play-all'),
   stopAll: document.getElementById('btn-stop-all'),
   masterVol: document.getElementById('master-volume'),
@@ -46,23 +103,159 @@ const els = {
   newName: document.getElementById('new-feed-name'),
 };
 
-function loadFeeds() {
+function readStored(key) {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length) return parsed;
-    }
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length) return parsed;
   } catch (_) {}
-  return DEFAULT_FEEDS.map((f) => ({ ...f }));
+  return null;
+}
+
+function parseCallsUrl(url) {
+  try {
+    const u = new URL(url);
+    if (u.protocol !== 'https:') return null;
+    const host = u.hostname.toLowerCase().replace(/\.$/, '');
+    if (host !== 'broadcastify.com' && !host.endsWith('.broadcastify.com')) return null;
+    if (u.username || u.password) return null;
+    if (u.port && u.port !== '443') return null;
+    if (u.search || u.hash) return null;
+    const match = u.pathname.match(/^\/calls\/tg\/11341\/(\d+)$/);
+    if (!match) return null;
+    return { talkgroup: match[1], url: `${u.origin}${u.pathname}` };
+  } catch (_) {
+    return null;
+  }
+}
+
+function cloneFeed(feed) {
+  const links = (feed.callsLinks || [])
+    .map((link) => {
+      const parsed = parseCallsUrl(link.url);
+      if (!parsed) return null;
+      return {
+        talkgroup: parsed.talkgroup,
+        label: link.label || `TG ${parsed.talkgroup}`,
+        url: parsed.url,
+      };
+    })
+    .filter(Boolean);
+  return {
+    kind: feed.kind === 'calls' ? 'calls' : 'listen',
+    feedId: String(feed.feedId),
+    name: feed.name,
+    region: feed.region || 'other',
+    callsLinks: links,
+  };
+}
+
+function knownListen(feedId) {
+  return DEFAULT_FEEDS.find((feed) => feed.kind === 'listen' && feed.feedId === feedId) || null;
+}
+
+function normalizeListen(feed) {
+  const id = String(feed.feedId || '').trim();
+  if (!/^\d+$/.test(id)) return null;
+  const known = knownListen(id);
+  let region = feed.region;
+  if (region !== 'nevada' && region !== 'california' && region !== 'other') {
+    region = known ? known.region : 'other';
+  } else if ((!feed.region || feed.region === 'other') && known) {
+    region = known.region;
+  }
+  return {
+    kind: 'listen',
+    feedId: id,
+    name: feed.name || (known && known.name) || `Feed ${id}`,
+    region,
+    callsLinks: [],
+  };
+}
+
+function normalizeCalls(feed) {
+  const copy = cloneFeed({ ...feed, kind: 'calls' });
+  if (!copy.callsLinks.length) return null;
+  if (/^\d+$/.test(copy.feedId)) return null;
+  if (copy.region !== 'nevada' && copy.region !== 'california') copy.region = 'nevada';
+  copy.name = copy.name || 'Calls';
+  return copy;
+}
+
+function normalizeStored(feed) {
+  if (!feed || typeof feed !== 'object') return null;
+  if (feed.kind === 'calls') return normalizeCalls(feed);
+  return normalizeListen(feed);
+}
+
+function upgradeLegacy(existing) {
+  const have = new Set(existing.map((feed) => feed.feedId));
+  const newcomers = DEFAULT_FEEDS.filter(
+    (feed) => feed.region === 'nevada' && !have.has(feed.feedId),
+  ).map(cloneFeed);
+  return newcomers.concat(existing);
+}
+
+function loadFeeds() {
+  const current = readStored(STORAGE_KEY);
+  if (current) {
+    const parsed = current.map(normalizeStored).filter(Boolean);
+    if (parsed.length) return parsed;
+  }
+  const legacy = readStored(LEGACY_STORAGE_KEY);
+  if (legacy) {
+    const old = legacy.map((feed) => normalizeListen(feed || {})).filter(Boolean);
+    if (old.length) return upgradeLegacy(old);
+  }
+  return DEFAULT_FEEDS.map(cloneFeed);
 }
 
 function saveFeeds() {
-  const list = [...players.values()].map((p) => ({
-    feedId: p.feedId,
-    name: p.name,
-  }));
+  const list = [...players.values()].map((card) => {
+    if (card.kind === 'calls') {
+      return {
+        kind: 'calls',
+        feedId: card.feedId,
+        name: card.name,
+        region: card.region,
+        callsLinks: card.callsLinks,
+      };
+    }
+    return {
+      kind: 'listen',
+      feedId: card.feedId,
+      name: card.name,
+      region: card.region || 'other',
+    };
+  });
   localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+}
+
+function ensureSection(region) {
+  let node = sectionNodes.get(region);
+  if (!node) {
+    node = document.createElement('h2');
+    node.className = 'feed-section';
+    node.dataset.region = region;
+    node.textContent = SECTION_TITLES[region] || region;
+    sectionNodes.set(region, node);
+  }
+  return node;
+}
+
+/** Move cards in saved order and insert a section label when the region changes. */
+function layoutFeeds() {
+  for (const node of sectionNodes.values()) node.remove();
+  let previous = null;
+  for (const card of players.values()) {
+    const region = card.region;
+    if ((region === 'nevada' || region === 'california') && region !== previous) {
+      els.grid.appendChild(ensureSection(region));
+    }
+    previous = region;
+    els.grid.appendChild(card.root);
+  }
 }
 
 /**
@@ -129,6 +322,8 @@ function isNotAllowed(err) {
 
 class FeedPlayer {
   constructor(feedId, name) {
+    this.kind = 'listen';
+    this.region = 'other';
     this.feedId = String(feedId);
     this.name = name || `Feed ${feedId}`;
     this.hls = null;
@@ -571,13 +766,81 @@ class FeedPlayer {
   }
 }
 
-function addFeed(feedId, name) {
-  const id = String(feedId).replace(/\D/g, '');
-  if (!id || players.has(id)) return;
+class CallsCard {
+  constructor(feed) {
+    this.kind = 'calls';
+    this.feedId = String(feed.feedId);
+    this.name = feed.name || 'Calls';
+    this.region = feed.region || 'nevada';
+    this.callsLinks = (feed.callsLinks || []).map((link) => ({ ...link }));
+
+    const node = els.callsTpl.content.firstElementChild.cloneNode(true);
+    node.dataset.feedId = this.feedId;
+    this.root = node;
+    node.querySelector('.feed-name').textContent = this.name;
+    const tgLine = this.callsLinks
+      .map((link) => `${link.label} TG ${link.talkgroup}`)
+      .join('  ·  ');
+    node.querySelector('.calls-tgs').textContent = tgLine;
+    this.btnOpenAll = node.querySelector('.btn-open-all');
+    this.btnRemove = node.querySelector('.btn-remove');
+    if (this.callsLinks.length > 1) this.btnOpenAll.textContent = 'Open all';
+
+    this.btnOpenAll.addEventListener('click', () => this.openAll());
+    this.btnRemove.addEventListener('click', () => removeFeed(this.feedId));
+
+    const linksEl = node.querySelector('.calls-links');
+    if (this.callsLinks.length > 1) {
+      for (const link of this.callsLinks) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn-sm btn-calls-link';
+        button.textContent = `${link.label} · TG ${link.talkgroup}`;
+        button.addEventListener('click', () => this.openOne(link.url));
+        linksEl.appendChild(button);
+      }
+    }
+  }
+
+  openAll() {
+    for (const link of this.callsLinks) this.openOne(link.url);
+  }
+
+  openOne(url) {
+    if (!parseCallsUrl(url)) return;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }
+
+  dispose() {
+    this.root.remove();
+  }
+}
+
+function addListen(feedId, name, region) {
+  const id = String(feedId).trim();
+  if (!/^\d+$/.test(id) || players.has(id)) return;
   const player = new FeedPlayer(id, name);
+  const known = knownListen(id);
+  player.region = region || (known && known.region) || 'other';
   players.set(id, player);
-  els.grid.appendChild(player.root);
+  layoutFeeds();
   saveFeeds();
+}
+
+function addCalls(feed) {
+  const normalized = normalizeCalls(feed);
+  if (!normalized || players.has(normalized.feedId)) return;
+  const card = new CallsCard(normalized);
+  players.set(normalized.feedId, card);
+  layoutFeeds();
+  saveFeeds();
+}
+
+function addFeed(feedId, name) {
+  const id = String(feedId).trim();
+  if (!/^\d+$/.test(id) || players.has(id)) return;
+  const known = knownListen(id);
+  addListen(id, name || (known && known.name), known ? known.region : 'other');
 }
 
 function removeFeed(feedId) {
@@ -585,6 +848,7 @@ function removeFeed(feedId) {
   if (!p) return;
   p.dispose();
   players.delete(String(feedId));
+  layoutFeeds();
   saveFeeds();
 }
 
@@ -593,10 +857,13 @@ function init() {
   if (Number(els.masterVol.value) === 0) els.masterVol.value = '80';
 
   const feeds = loadFeeds();
-  for (const f of feeds) addFeed(f.feedId, f.name);
+  for (const f of feeds) {
+    if (f.kind === 'calls') addCalls(f);
+    else addListen(f.feedId, f.name, f.region);
+  }
 
   els.playAll.addEventListener('click', () => {
-    const list = [...players.values()];
+    const list = [...players.values()].filter((p) => p.kind !== 'calls');
     // CRITICAL: unlock synchronously before any network await
     unlockAudioGesture(list);
     for (const p of list) {
@@ -606,11 +873,15 @@ function init() {
   });
 
   els.stopAll.addEventListener('click', () => {
-    for (const p of players.values()) p.stop();
+    for (const p of players.values()) {
+      if (p.kind !== 'calls') p.stop();
+    }
   });
 
   els.masterVol.addEventListener('input', () => {
-    for (const p of players.values()) p.applyVolume();
+    for (const p of players.values()) {
+      if (p.kind !== 'calls') p.applyVolume();
+    }
   });
 
   els.settingsBtn.addEventListener('click', () => {

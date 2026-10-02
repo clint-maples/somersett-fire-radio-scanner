@@ -1,6 +1,6 @@
 # Android app
 
-Assembleable Gradle project. Application id `com.clintmaples.broadcastifyscanner`, display name **Somersett Fire Radio Scanner**, **versionName 0.3.0**, **versionCode 3**.
+Assembleable Gradle project. Application id `com.clintmaples.broadcastifyscanner`, display name **Somersett Fire Radio Scanner**, **versionName 0.4.0**, **versionCode 4**.
 
 ```bash
 ./gradlew assembleRelease

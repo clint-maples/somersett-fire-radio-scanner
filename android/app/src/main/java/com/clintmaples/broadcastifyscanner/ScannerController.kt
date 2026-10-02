@@ -2,8 +2,14 @@ package com.clintmaples.broadcastifyscanner
 
 import android.app.Application
 import com.clintmaples.broadcastifyscanner.data.BroadcastifyClient
+import com.clintmaples.broadcastifyscanner.data.CallsOpener
+import com.clintmaples.broadcastifyscanner.data.DefaultFeeds
 import com.clintmaples.broadcastifyscanner.data.Feed
+import com.clintmaples.broadcastifyscanner.data.FeedKind
+import com.clintmaples.broadcastifyscanner.data.FeedRegion
+import com.clintmaples.broadcastifyscanner.data.FeedStatus
 import com.clintmaples.broadcastifyscanner.data.FeedStore
+import com.clintmaples.broadcastifyscanner.data.FeedUiState
 import com.clintmaples.broadcastifyscanner.data.ScannerUiState
 import com.clintmaples.broadcastifyscanner.player.FeedSession
 import com.clintmaples.broadcastifyscanner.player.PlaybackService
@@ -22,13 +28,14 @@ class ScannerController(private val app: Application) {
     private val store = FeedStore(app)
     private val client = BroadcastifyClient()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val order = mutableListOf<Feed>()
     private val sessions = linkedMapOf<String, FeedSession>()
 
     private val _state = MutableStateFlow(ScannerUiState())
     val state: StateFlow<ScannerUiState> = _state.asStateFlow()
 
     init {
-        store.loadFeeds().forEach { addSession(it, persist = false) }
+        store.loadFeeds().forEach { addEntry(it, persist = false) }
         _state.update {
             it.copy(
                 masterVolume = store.loadMasterVolume(),
@@ -87,12 +94,22 @@ class ScannerController(private val app: Application) {
     }
 
     fun addFeed(rawId: String, rawName: String?) {
-        val id = rawId.filter { it.isDigit() }
-        if (id.isEmpty() || sessions.containsKey(id)) return
-        val name = rawName?.trim().orEmpty().ifBlank { "Feed $id" }
-        addSession(Feed(id, name), persist = true)
+        val id = rawId.trim()
+        if (id.isEmpty() || !id.all { it.isDigit() } || order.any { it.feedId == id }) return
+        val known = DefaultFeeds.knownListen(id)
+        val typed = rawName?.trim().orEmpty()
+        val name = typed.ifBlank { known?.name ?: "Feed $id" }
+        addEntry(
+            Feed(
+                feedId = id,
+                name = name,
+                kind = FeedKind.LISTEN,
+                region = known?.region ?: FeedRegion.OTHER,
+            ),
+            persist = true,
+        )
         publish()
-        if (rawName.isNullOrBlank()) {
+        if (typed.isEmpty()) {
             scope.launch {
                 runCatching { withContext(Dispatchers.IO) { client.fetchFeedMeta(id) } }
                     .onSuccess { meta -> sessions[id]?.rename(meta.name) }
@@ -100,9 +117,24 @@ class ScannerController(private val app: Application) {
         }
     }
 
+    /**
+     * Opens every Calls link on the card, or just [url] when that link belongs to the card.
+     * Listen feeds are ignored.
+     */
+    fun openCalls(feedId: String, url: String? = null) {
+        val feed = order.firstOrNull { it.feedId == feedId } ?: return
+        if (feed.kind != FeedKind.CALLS) return
+        val urls = if (url == null) {
+            feed.callsLinks.map { it.url }
+        } else {
+            feed.callsLinks.filter { it.url == url }.map { it.url }
+        }
+        CallsOpener.open(app, urls)
+    }
+
     fun removeFeed(feedId: String) {
+        order.removeAll { it.feedId == feedId }
         sessions.remove(feedId)?.dispose()
-        persistFeeds()
         syncService()
         publish()
     }
@@ -113,30 +145,66 @@ class ScannerController(private val app: Application) {
 
     fun playingCount(): Int = sessions.values.count { it.wantPlay }
 
-    private fun addSession(feed: Feed, persist: Boolean) {
-        if (sessions.containsKey(feed.feedId)) return
-        val session = FeedSession(
-            initial = feed,
-            appContext = app,
-            scope = scope,
-            client = client,
-            masterVolume = { _state.value.masterVolume },
-            onChanged = { publish() },
-            onPlayingChanged = { syncService() },
-        )
-        sessions[feed.feedId] = session
+    private fun addEntry(feed: Feed, persist: Boolean) {
+        if (order.any { it.feedId == feed.feedId }) return
+        if (feed.kind == FeedKind.CALLS) {
+            if (feed.feedId.all { it.isDigit() }) return
+            if (feed.callsLinks.isEmpty()) return
+            order += feed
+        } else {
+            val id = feed.feedId.trim()
+            if (id.isEmpty() || !id.all { it.isDigit() } || sessions.containsKey(id)) return
+            val listen = feed.copy(feedId = id, kind = FeedKind.LISTEN, callsLinks = emptyList())
+            order += listen
+            val session = FeedSession(
+                initial = listen,
+                appContext = app,
+                scope = scope,
+                client = client,
+                masterVolume = { _state.value.masterVolume },
+                onChanged = { publish() },
+                onPlayingChanged = { syncService() },
+            )
+            sessions[id] = session
+        }
         if (persist) persistFeeds()
     }
 
     private fun persistFeeds() {
-        store.saveFeeds(sessions.values.map { Feed(it.feedId, it.name) })
+        val snapshot = order.map { feed ->
+            val session = sessions[feed.feedId]
+            if (session != null) feed.copy(name = session.name) else feed
+        }
+        order.clear()
+        order.addAll(snapshot)
+        store.saveFeeds(snapshot)
     }
 
     private fun publish() {
         persistFeeds()
         _state.update { current ->
-            current.copy(feeds = sessions.values.map { it.uiState() })
+            current.copy(
+                feeds = order.map { feed ->
+                    val session = sessions[feed.feedId]
+                    if (session != null) {
+                        session.uiState(feed.region)
+                    } else {
+                        callsUi(feed)
+                    }
+                },
+            )
         }
+    }
+
+    private fun callsUi(feed: Feed): FeedUiState {
+        return FeedUiState(
+            feedId = feed.feedId,
+            name = feed.name,
+            status = FeedStatus.IDLE,
+            kind = FeedKind.CALLS,
+            region = feed.region,
+            callsLinks = feed.callsLinks,
+        )
     }
 
     private fun syncService() {

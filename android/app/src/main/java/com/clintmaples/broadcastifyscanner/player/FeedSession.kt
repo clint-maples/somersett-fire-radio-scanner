@@ -17,6 +17,8 @@ import com.clintmaples.broadcastifyscanner.data.BroadcastifyAllowlist
 import com.clintmaples.broadcastifyscanner.data.BroadcastifyClient
 import com.clintmaples.broadcastifyscanner.data.BroadcastifyHttp
 import com.clintmaples.broadcastifyscanner.data.Feed
+import com.clintmaples.broadcastifyscanner.data.FeedKind
+import com.clintmaples.broadcastifyscanner.data.FeedRegion
 import com.clintmaples.broadcastifyscanner.data.FeedStatus
 import com.clintmaples.broadcastifyscanner.data.FeedUiState
 import kotlinx.coroutines.CoroutineScope
@@ -65,7 +67,7 @@ class FeedSession(
         }
     }
 
-    fun uiState(): FeedUiState = FeedUiState(
+    fun uiState(region: FeedRegion = FeedRegion.OTHER): FeedUiState = FeedUiState(
         feedId = feedId,
         name = name,
         status = status,
@@ -73,6 +75,8 @@ class FeedSession(
         muted = muted,
         volume = volume,
         wantPlay = wantPlay,
+        kind = FeedKind.LISTEN,
+        region = region,
     )
 
     fun attachSpectrum(view: SpectrumView?) {
@@ -155,8 +159,15 @@ class FeedSession(
     }
 
     private suspend fun startOrRefresh(gen: Int, reconnecting: Boolean) {
+        val listenId = feedId.trim()
+        if (listenId.isEmpty() || !listenId.all { it.isDigit() }) {
+            if (gen != playGeneration || !wantPlay) return
+            setStatus(FeedStatus.ERROR, "not a listen feed")
+            onChanged()
+            return
+        }
         try {
-            val meta = withContext(Dispatchers.IO) { client.fetchFeedMeta(feedId) }
+            val meta = withContext(Dispatchers.IO) { client.fetchFeedMeta(listenId) }
             if (gen != playGeneration || !wantPlay) return
             if (meta.name.isNotBlank() && meta.name != name) {
                 name = meta.name

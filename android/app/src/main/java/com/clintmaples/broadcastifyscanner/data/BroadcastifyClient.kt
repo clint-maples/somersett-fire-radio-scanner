@@ -25,8 +25,8 @@ class BroadcastifyClient(
     private val http: OkHttpClient = BroadcastifyHttp.client,
 ) {
     fun fetchFeedMeta(feedId: String): FeedMeta {
-        val id = feedId.filter { it.isDigit() }
-        require(id.isNotEmpty()) { "Invalid feedId" }
+        val id = feedId.trim()
+        require(id.isNotEmpty() && id.all { it.isDigit() }) { "Invalid listen feedId" }
 
         val url = "https://www.broadcastify.com/listen/feed/popout.php?feedId=$id"
         val request = Request.Builder()

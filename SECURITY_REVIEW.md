@@ -54,7 +54,7 @@ The 0.1.0 review rated the then-current tree **Medium**, driven by debug-signed 
 
 | Step | Behavior | Evidence |
 |---|---|---|
-| Configure | User adds numeric Broadcastify feed IDs (defaults 14826 / 47365 / 47367). | `ScannerScreen.kt` filters input to digits; `DefaultFeeds` in `Feed.kt` |
+| Configure | User adds numeric Broadcastify **listen** feed IDs. 0.4.0 defaults: Calls deep links (TGs 30433 / 30434+30435 / 30436–30438, system 11341 — browser only, not scraped) then listen 7364, 14826, 47365, 47367. | `ScannerScreen.kt` filters input to digits; `DefaultFeeds` in `Feed.kt`. Calls URLs are allowlisted public `/calls/tg/11341/` pages. |
 | Resolve | `GET https://www.broadcastify.com/listen/feed/popout.php?feedId=<digits>` with a desktop Chrome User-Agent. Regex-parse `hlsUrl` / `feedName`. Redirects and the final URL must stay on allowlisted Broadcastify hosts. | `BroadcastifyClient.kt`, `BroadcastifyAllowlist.kt` |
 | Play | Media3 ExoPlayer loads the HLS URL only after the same allowlist check, via OkHttp (no cross-protocol redirects). On 401/403/parse errors, wait 4s and scrape again. | `FeedSession.kt` |
 | Persist | Feed ID + display name, master volume, keep-awake flag. **Not** the HLS URL. Auto Backup off. | `FeedStore.kt`, manifest |

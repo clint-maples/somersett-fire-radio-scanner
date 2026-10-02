@@ -55,6 +55,8 @@ class MainActivity : ComponentActivity() {
                     onKeepAwake = controller::setKeepAwake,
                     onToggleAdd = { controller.setAddPanelOpen(!state.addPanelOpen) },
                     onAddFeed = { id, name -> controller.addFeed(id, name) },
+                    onOpenCalls = { id -> controller.openCalls(id) },
+                    onOpenCallLink = { id, url -> controller.openCalls(id, url) },
                     onAttachSpectrum = controller::attachSpectrum,
                 )
             }
