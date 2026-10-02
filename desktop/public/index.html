@@ -26,9 +26,9 @@
   </header>
 
   <p class="banner-hint">
-    Top group is <strong>Nevada / Washoe</strong>. Calls cards open Broadcastify in the browser
-    (not in-app audio). Listen feeds, including Reno/Sparks 7364 and
-    <strong>California / NEU–TNF</strong> below, play here.
+    Top group is <strong>Nevada / Washoe</strong>. TMFPD Calls play here as each transmission
+    arrives (quiet between calls is normal). Reno/Sparks 7364 and
+    <strong>California / NEU–TNF</strong> below stay on the listen feeds.
     If a card says <strong>blocked</strong>, click <strong>Play</strong> on that card (browser autoplay).
     Free feeds may play a short Broadcastify preroll first.
   </p>
@@ -43,25 +43,6 @@
   </section>
 
   <main id="feed-grid" class="feed-grid"></main>
-
-  <template id="calls-card-tpl">
-    <article class="feed-card feed-card-calls" data-feed-id="">
-      <header class="card-head">
-        <div class="card-title-wrap">
-          <h2 class="feed-name"></h2>
-          <span class="feed-id calls-badge">Calls (opens Broadcastify)</span>
-          <p class="calls-note">Not in-app audio. Opens the public Broadcastify Calls page.</p>
-        </div>
-        <span class="status" data-status="calls">Calls</span>
-      </header>
-      <p class="calls-tgs"></p>
-      <div class="card-actions">
-        <button type="button" class="btn btn-sm btn-primary btn-open-all">Open Broadcastify</button>
-        <button type="button" class="btn btn-sm btn-remove" title="Remove">✕</button>
-      </div>
-      <div class="calls-links"></div>
-    </article>
-  </template>
 
   <template id="feed-card-tpl">
     <article class="feed-card" data-feed-id="">

@@ -1,7 +1,7 @@
 # Somersett Fire Radio Scanner
 
-**Current version:** 0.4.0  
-**Download:** [Somersett Fire Radio Scanner 0.4.0 APK](https://github.com/clint-maples/somersett-fire-radio-scanner/releases/download/0.4.0/somersett-fire-radio-scanner-0.4.0.apk)
+**Current version:** 0.4.1  
+**Download:** [Somersett Fire Radio Scanner 0.4.1 APK](https://github.com/clint-maples/somersett-fire-radio-scanner/releases/download/0.4.1/somersett-fire-radio-scanner-0.4.1.apk)
 
 **Repo:** [github.com/clint-maples/somersett-fire-radio-scanner](https://github.com/clint-maples/somersett-fire-radio-scanner)
 
@@ -10,9 +10,9 @@ Local multi-feed Broadcastify radio / fire scanner. Clint used a Python + web bu
 1. **Android app** (primary) — simultaneous feeds, per-feed controls, green→yellow spectrum
 2. **Windows / desktop** Python + web reference under [`desktop/`](desktop/)
 
-No Broadcastify page chrome or ads in the UI. **No Broadcastify login.**
+No Broadcastify page chrome or ads in the UI. Listen feeds need no login. Washoe **Calls** talkgroups play in-app with a listener session baked into the release APK at build time (`BROADCASTIFY_USERNAME` / `BROADCASTIFY_PASSWORD`, never committed).
 
-0.1.0 and 0.2.0 sideload APKs were signed with the Android **debug** certificate. **0.3.0** was release-signed with a different upload certificate than **0.4.0** (the Somersett alias in the release vault). Android will not update across that cert change — uninstall 0.1.0, 0.2.0, and 0.3.0 before installing 0.4.0.
+0.1.0 and 0.2.0 sideload APKs were signed with the Android **debug** certificate. **0.3.0** was release-signed with a different upload certificate than **0.4.0** and **0.4.1** (the Somersett alias in the release vault). Android will not update 0.3.0 in place — uninstall 0.1.0, 0.2.0, and 0.3.0 first. **0.4.1 uses the same certificate as 0.4.0**, so that install can update in place.
 
 Previous APK: [0.3.0](https://github.com/clint-maples/somersett-fire-radio-scanner/releases/download/0.3.0/somersett-fire-radio-scanner-0.3.0.apk).
 
@@ -22,9 +22,12 @@ The list is grouped. **Nevada / Washoe** is on top. **California / NEU–TNF** s
 
 | Group | Kind | ID | Name |
 |----|------|----|------|
-| Nevada / Washoe | Calls (opens Broadcastify) | TG **30433** (system **11341**) | NSRS Washoe TMFPD Red Dispatch |
-| Nevada / Washoe | Calls (opens Broadcastify) | TG **30434**, **30435** | TMFPD Command 1 + Command 2 |
-| Nevada / Washoe | Calls (opens Broadcastify) | TG **30436**, **30437**, **30438** | TMFPD Tac 4–6 |
+| Nevada / Washoe | Calls (in-app) | TG **30433** (system **11341**) | NSRS Washoe TMFPD Red Dispatch |
+| Nevada / Washoe | Calls (in-app) | TG **30434** | TMFPD Command 1 |
+| Nevada / Washoe | Calls (in-app) | TG **30435** | TMFPD Command 2 |
+| Nevada / Washoe | Calls (in-app) | TG **30436** | TMFPD Tac 4 |
+| Nevada / Washoe | Calls (in-app) | TG **30437** | TMFPD Tac 5 |
+| Nevada / Washoe | Calls (in-app) | TG **30438** | TMFPD Tac 6 |
 | Nevada / Washoe | Listen (in-app) | **7364** | Reno and Sparks Police and Fire |
 | California / NEU–TNF | Listen (in-app) | **14826** | East Placer / Nevada CAL FIRE NEU (Kings Beach / Truckee) |
 | California / NEU–TNF | Listen (in-app) | **47365** | CAL FIRE NEU West |
@@ -32,7 +35,7 @@ The list is grouped. **Nevada / Washoe** is on top. **California / NEU–TNF** s
 
 Listen IDs are the numbers in `https://www.broadcastify.com/listen/feed/<id>`. Add or remove listen feeds anytime.
 
-The three Nevada **Calls** rows are talkgroups on Broadcastify Calls (Washoe NSRS, RadioReference/Broadcastify trunked system sid **11341**), not listen feed IDs. This release does **not** play them in-app. Each card is labeled **Calls (opens Broadcastify)** and opens the public page, for example `https://www.broadcastify.com/calls/tg/11341/30433`. Command and Tac cards open each talkgroup (Open all, plus a button per TG). Full in-app Calls audio needs an approved Broadcastify Calls Client API key from [bcfy.io/dev](https://bcfy.io/dev); this build does not include one. Do not treat 30433–30438 as listen feed IDs.
+The Nevada **Calls** rows are talkgroups on Broadcastify Calls (Washoe NSRS, sid **11341**), not listen feed IDs. Play queues each transmission and stays quiet between calls. Do not treat 30433–30438 as listen feed IDs — they are not sent to the HLS popout scraper.
 
 ---
 
@@ -42,18 +45,18 @@ Kotlin + Jetpack Compose + Media3 / ExoPlayer. Each feed is its own player so th
 
 ### Install a signed APK
 
-The published **0.4.0** APK on [GitHub Releases](https://github.com/clint-maples/somersett-fire-radio-scanner/releases) is release-signed. This git tree does **not** contain APKs or keystores.
+The published **0.4.1** APK on [GitHub Releases](https://github.com/clint-maples/somersett-fire-radio-scanner/releases) is release-signed. This git tree does **not** contain APKs, keystores, or Broadcastify passwords.
 
-1. Download the signed `0.4.0` APK from the [top of this README](#somersett-fire-radio-scanner) or from Releases — or build one locally (below).
+1. Download the signed `0.4.1` APK from the [top of this README](#somersett-fire-radio-scanner) or from Releases — or build one locally (below).
 2. On the phone: **Settings → Security** (or **Apps**) → allow **Install unknown apps** for the app you use to open the file.
-3. Uninstall 0.1.0, 0.2.0, and 0.3.0 first. 0.4.0 uses a different release certificate than 0.3.0, so it cannot replace that install in place.
+3. Uninstall 0.1.0, 0.2.0, and 0.3.0 first. 0.4.0 and 0.4.1 share the Somersett release certificate, so 0.4.0 can update in place. 0.3.0 cannot.
 4. Open the APK and install.
-5. Launch **Somersett Fire Radio Scanner**, grant notifications if you want the “Listening” pill while it runs in the background, then tap **Play all** for listen feeds. Calls cards open Broadcastify in the browser.
+5. Launch **Somersett Fire Radio Scanner**, grant notifications if you want the “Listening” pill while it runs in the background, then tap **Play all**. That starts the listen feeds and the TMFPD Calls cards together.
 
-Published 0.4.0 fingerprints:
+Published 0.4.1 fingerprints:
 
 - Signing-cert SHA-256: `9e5c47959c38448a6f271aab31850662b1369c3c188ae05c57daf4e74d3128eb`
-- APK SHA-256: `e5f4f8c5b672beed88098e31f36610863478d209c3ea978203b5ac8835399781`
+- APK SHA-256: `09bfcde2de3f9ef5731de841a6d2ec9704c8a58c714d827c9b025c94b43d9932`
 
 Published 0.3.0 fingerprints:
 
@@ -108,6 +111,8 @@ keytool -genkeypair -v \
 2. Copy [`android/keystore.properties.example`](android/keystore.properties.example) to `android/keystore.properties` (gitignored) and fill in `storeFile`, `storePassword`, `keyAlias`, and `keyPassword`.  
    Or export `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`, and `RELEASE_KEY_PASSWORD`.
 
+   Calls playback in a release APK also needs `BROADCASTIFY_USERNAME` and `BROADCASTIFY_PASSWORD` (or gitignored `android/broadcastify.properties` from [`broadcastify.properties.example`](android/broadcastify.properties.example)). `assembleRelease` fails if those are missing. They are compiled into `BuildConfig` for this personal sideload and are not written to git.
+
 3. `./gradlew assembleRelease` then writes `android/app/build/outputs/apk/release/app-release.apk`.
 
 4. Publish the APK on GitHub Releases and record the **signing-cert SHA-256** and APK SHA-256 in the release notes.
@@ -142,7 +147,7 @@ Then open **http://127.0.0.1:3847** and click **Play all** (a click is required 
 3. Unzip, run `start.bat` or `python server.py` / `py server.py`.
 4. Browse to http://127.0.0.1:3847 → **Play all**.
 
-No installer and no Node. A later PyInstaller one-file `.exe` is optional; not required for 0.4.0.
+No installer and no Node. A later PyInstaller one-file `.exe` is optional; not required for 0.4.1.
 
 Desktop UI details (autoplay, Reconnect, ＋ add feed) live in [`desktop/README.md`](desktop/README.md).
 

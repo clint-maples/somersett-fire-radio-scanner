@@ -17,6 +17,34 @@ fun signingValue(propertyKey: String, envName: String): String? {
         ?: keystoreProperties.getProperty(propertyKey)?.takeIf { it.isNotBlank() }
 }
 
+val broadcastifyProperties = Properties()
+val broadcastifyPropertiesFile = rootProject.file("broadcastify.properties")
+if (broadcastifyPropertiesFile.isFile) {
+    broadcastifyPropertiesFile.inputStream().use { broadcastifyProperties.load(it) }
+}
+
+fun broadcastifyCredential(propertyKey: String, envName: String): String {
+    return System.getenv(envName)?.takeIf { it.isNotBlank() }
+        ?: broadcastifyProperties.getProperty(propertyKey)?.takeIf { it.isNotBlank() }
+        ?: ""
+}
+
+/** Java string literal for BuildConfig. Does not log the value. */
+fun javaString(value: String): String {
+    val escaped = buildString {
+        value.forEach { ch ->
+            when (ch) {
+                '\\' -> append("\\\\")
+                '"' -> append("\\\"")
+                '\n' -> append("\\n")
+                '\r' -> append("\\r")
+                else -> append(ch)
+            }
+        }
+    }
+    return "\"$escaped\""
+}
+
 val releaseStorePath = signingValue("storeFile", "RELEASE_STORE_FILE")
 val releaseStorePassword = signingValue("storePassword", "RELEASE_STORE_PASSWORD")
 val releaseKeyAlias = signingValue("keyAlias", "RELEASE_KEY_ALIAS")
@@ -39,8 +67,19 @@ android {
         applicationId = "com.clintmaples.broadcastifyscanner"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.4.1"
+
+        val broadcastifyUser = broadcastifyCredential(
+            "broadcastify.username",
+            "BROADCASTIFY_USERNAME",
+        )
+        val broadcastifyPassword = broadcastifyCredential(
+            "broadcastify.password",
+            "BROADCASTIFY_PASSWORD",
+        )
+        buildConfigField("String", "BROADCASTIFY_USERNAME", javaString(broadcastifyUser))
+        buildConfigField("String", "BROADCASTIFY_PASSWORD", javaString(broadcastifyPassword))
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -115,7 +154,6 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
-    implementation("androidx.browser:browser:1.8.0")
 
     implementation("androidx.media3:media3-exoplayer:$media3")
     implementation("androidx.media3:media3-exoplayer-hls:$media3")
@@ -129,4 +167,20 @@ dependencies {
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303")
+}
+
+tasks.configureEach {
+    if (name == "assembleRelease" || name == "bundleRelease") {
+        doFirst {
+            val user = broadcastifyCredential("broadcastify.username", "BROADCASTIFY_USERNAME")
+            val pass = broadcastifyCredential("broadcastify.password", "BROADCASTIFY_PASSWORD")
+            if (user.isBlank() || pass.isBlank()) {
+                throw GradleException(
+                    "Release build needs BROADCASTIFY_USERNAME and BROADCASTIFY_PASSWORD, " +
+                        "or android/broadcastify.properties. Do not commit that file.",
+                )
+            }
+        }
+    }
 }

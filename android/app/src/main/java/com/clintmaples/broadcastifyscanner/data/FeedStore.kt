@@ -10,7 +10,8 @@ class FeedStore(context: Context) {
     fun loadFeeds(): List<Feed> {
         val current = prefs.getString(KEY_FEEDS, null)
         if (current != null) {
-            return decode(current).ifEmpty { DefaultFeeds.ALL }
+            val decoded = DefaultFeeds.dedupe(decode(current))
+            return decoded.ifEmpty { DefaultFeeds.ALL }
         }
         val legacy = prefs.getString(KEY_FEEDS_V1, null) ?: return DefaultFeeds.ALL
         val old = decodeLegacy(legacy)
@@ -50,16 +51,8 @@ class FeedStore(context: Context) {
                     .put("kind", if (feed.kind == FeedKind.CALLS) "calls" else "listen")
                     .put("region", feed.region.name.lowercase())
                 if (feed.kind == FeedKind.CALLS) {
-                    val links = JSONArray()
-                    feed.callsLinks.forEach { link ->
-                        links.put(
-                            JSONObject()
-                                .put("talkgroup", link.talkgroup)
-                                .put("label", link.label)
-                                .put("url", link.url),
-                        )
-                    }
-                    obj.put("callsLinks", links)
+                    obj.put("systemSid", feed.systemSid)
+                        .put("talkgroup", feed.talkgroup)
                 }
                 arr.put(obj)
             }
@@ -71,7 +64,7 @@ class FeedStore(context: Context) {
                 val arr = JSONArray(raw)
                 buildList {
                     for (i in 0 until arr.length()) {
-                        decodeEntry(arr.getJSONObject(i))?.let { add(it) }
+                        addAll(decodeEntry(arr.getJSONObject(i)))
                     }
                 }
             } catch (_: Exception) {
@@ -104,7 +97,7 @@ class FeedStore(context: Context) {
             }
         }
 
-        private fun decodeEntry(obj: JSONObject): Feed? {
+        private fun decodeEntry(obj: JSONObject): List<Feed> {
             val kindRaw = obj.optString("kind")
             val name = obj.optString("name")
             val region = when (obj.optString("region")) {
@@ -113,47 +106,78 @@ class FeedStore(context: Context) {
                 else -> FeedRegion.OTHER
             }
             if (kindRaw == "calls") {
-                val feedId = obj.optString("feedId").trim()
-                // A Calls card id must not be a bare listen feed id / talkgroup number.
-                if (feedId.isEmpty() || feedId.all { it.isDigit() }) return null
-                val links = decodeLinks(obj.optJSONArray("callsLinks"))
-                if (links.isEmpty()) return null
-                return Feed(
-                    feedId = feedId,
-                    name = name.ifBlank { "Calls" },
-                    kind = FeedKind.CALLS,
-                    region = if (region == FeedRegion.OTHER) FeedRegion.NEVADA else region,
-                    callsLinks = links,
-                )
+                return decodeCalls(obj, name, region)
             }
             val id = obj.optString("feedId").trim()
-            if (id.isEmpty() || !id.all { it.isDigit() }) return null
+            if (id.isEmpty() || !id.all { it.isDigit() }) return emptyList()
             val known = DefaultFeeds.knownListen(id)
             val resolvedRegion = when {
                 region != FeedRegion.OTHER -> region
                 known != null -> known.region
                 else -> FeedRegion.OTHER
             }
-            return Feed(
-                feedId = id,
-                name = name.ifBlank { known?.name ?: "Feed $id" },
-                kind = FeedKind.LISTEN,
-                region = resolvedRegion,
+            return listOf(
+                Feed(
+                    feedId = id,
+                    name = name.ifBlank { known?.name ?: "Feed $id" },
+                    kind = FeedKind.LISTEN,
+                    region = resolvedRegion,
+                ),
             )
         }
 
-        private fun decodeLinks(arr: JSONArray?): List<CallsLink> {
-            if (arr == null) return emptyList()
+        private fun decodeCalls(obj: JSONObject, name: String, region: FeedRegion): List<Feed> {
+            val explicit = obj.optString("talkgroup").trim()
+            if (CallsCatalog.isTalkgroup(explicit)) {
+                val sid = obj.optString("systemSid").trim().ifBlank { CallsCatalog.SYSTEM_SID }
+                if (!CallsCatalog.isTalkgroup(sid)) return emptyList()
+                val feedId = obj.optString("feedId").trim().ifBlank {
+                    CallsCatalog.cardId(sid, explicit)
+                }
+                if (feedId.isEmpty() || feedId.all { it.isDigit() }) return emptyList()
+                val known = DefaultFeeds.knownCalls(explicit)
+                return listOf(
+                    Feed(
+                        feedId = feedId,
+                        name = name.ifBlank { known?.name ?: "TG $explicit" },
+                        kind = FeedKind.CALLS,
+                        region = if (region == FeedRegion.OTHER) FeedRegion.NEVADA else region,
+                        systemSid = sid,
+                        talkgroup = explicit,
+                    ),
+                )
+            }
+            // 0.4.0 stored one card with several deep links. Expand to one card per TG.
+            val links = obj.optJSONArray("callsLinks") ?: return emptyList()
             return buildList {
-                for (i in 0 until arr.length()) {
-                    val obj = arr.optJSONObject(i) ?: continue
-                    val url = obj.optString("url")
-                    if (!CallsPages.isPublicCallsTalkgroupUrl(url)) continue
-                    val tg = url.trimEnd('/').substringAfterLast('/')
-                    val label = obj.optString("label").ifBlank { "TG $tg" }
-                    add(CallsLink(talkgroup = tg, label = label, url = url))
+                for (i in 0 until links.length()) {
+                    val link = links.optJSONObject(i) ?: continue
+                    val tg = link.optString("talkgroup").trim().ifBlank {
+                        talkgroupFromLegacyUrl(link.optString("url"))
+                    }
+                    if (!CallsCatalog.isTalkgroup(tg)) continue
+                    val known = DefaultFeeds.knownCalls(tg)
+                    add(
+                        Feed(
+                            feedId = CallsCatalog.cardId(CallsCatalog.SYSTEM_SID, tg),
+                            name = known?.name ?: link.optString("label").ifBlank { "TG $tg" },
+                            kind = FeedKind.CALLS,
+                            region = FeedRegion.NEVADA,
+                            systemSid = CallsCatalog.SYSTEM_SID,
+                            talkgroup = tg,
+                        ),
+                    )
                 }
             }
+        }
+
+        /** Reads a stored 0.4.0 page URL. Does not open it. */
+        private fun talkgroupFromLegacyUrl(url: String): String {
+            val marker = "/calls/tg/${CallsCatalog.SYSTEM_SID}/"
+            val idx = url.indexOf(marker)
+            if (idx < 0) return ""
+            val tg = url.substring(idx + marker.length).substringBefore('?').trimEnd('/')
+            return if (CallsCatalog.isTalkgroup(tg)) tg else ""
         }
     }
 }

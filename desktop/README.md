@@ -37,14 +37,17 @@ Same order as the Android app. **Nevada / Washoe** is the top group; **Californi
 
 | Group | Kind | ID | Name |
 |----|------|----|------|
-| Nevada / Washoe | Calls (opens browser) | TG 30433 | NSRS Washoe TMFPD Red Dispatch |
-| Nevada / Washoe | Calls (opens browser) | TG 30434, 30435 | TMFPD Command 1 + Command 2 |
-| Nevada / Washoe | Calls (opens browser) | TG 30436–30438 | TMFPD Tac 4–6 |
+| Nevada / Washoe | Calls (in-app) | TG 30433 | NSRS Washoe TMFPD Red Dispatch |
+| Nevada / Washoe | Calls (in-app) | TG 30434 | TMFPD Command 1 |
+| Nevada / Washoe | Calls (in-app) | TG 30435 | TMFPD Command 2 |
+| Nevada / Washoe | Calls (in-app) | TG 30436 | TMFPD Tac 4 |
+| Nevada / Washoe | Calls (in-app) | TG 30437 | TMFPD Tac 5 |
+| Nevada / Washoe | Calls (in-app) | TG 30438 | TMFPD Tac 6 |
 | Nevada / Washoe | Listen | 7364 | Reno and Sparks Police and Fire |
 | California / NEU–TNF | Listen | 14826 | East Placer / Nevada CAL FIRE NEU (Kings Beach / Truckee) |
 | California / NEU–TNF | Listen | 47365 | CAL FIRE NEU West |
 | California / NEU–TNF | Listen | 47367 | Tahoe National Forest West |
 
-Calls cards are labeled **Calls (opens Broadcastify)** and open the public talkgroup pages. They are not sent to `/api/stream`. **Play all** starts listen feeds only. Use **＋** in the header to add another listen feed by numeric Broadcastify feed ID.
+Calls cards Play in-app. The local server logs in with `BROADCASTIFY_USERNAME` and `BROADCASTIFY_PASSWORD` from the environment (never committed) and proxies each clip. Talkgroups are not sent to `/api/stream`. **Play all** starts listen feeds and Calls together. Use **＋** in the header to add another listen feed by numeric Broadcastify feed ID.
 
 See the repo root README for HLS/JWT details, preroll, and scanner-awareness notes.

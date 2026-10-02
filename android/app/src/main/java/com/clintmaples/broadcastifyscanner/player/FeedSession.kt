@@ -37,17 +37,17 @@ class FeedSession(
     private val masterVolume: () -> Float,
     private val onChanged: () -> Unit,
     private val onPlayingChanged: () -> Unit,
-) {
+) : FeedPlayer {
     var feedId: String = initial.feedId
         private set
-    var name: String = initial.name
+    override var name: String = initial.name
         private set
 
     var muted: Boolean = false
         private set
     var volume: Float = 1f
         private set
-    var wantPlay: Boolean = false
+    override var wantPlay: Boolean = false
         private set
     var status: FeedStatus = FeedStatus.IDLE
         private set
@@ -67,7 +67,7 @@ class FeedSession(
         }
     }
 
-    fun uiState(region: FeedRegion = FeedRegion.OTHER): FeedUiState = FeedUiState(
+    override fun uiState(region: FeedRegion): FeedUiState = FeedUiState(
         feedId = feedId,
         name = name,
         status = status,
@@ -79,19 +79,19 @@ class FeedSession(
         region = region,
     )
 
-    fun attachSpectrum(view: SpectrumView?) {
+    override fun attachSpectrum(view: SpectrumView?) {
         spectrumView = WeakReference(view)
         if (view == null) return
         if (!wantPlay || status == FeedStatus.IDLE) view.clear()
     }
 
-    fun setVolume(value: Float) {
+    override fun setVolume(value: Float) {
         volume = value.coerceIn(0f, 1f)
         applyGain()
         onChanged()
     }
 
-    fun toggleMute() {
+    override fun toggleMute() {
         muted = !muted
         applyGain()
         if (wantPlay && status == FeedStatus.PLAYING && muted) {
@@ -102,7 +102,7 @@ class FeedSession(
         onChanged()
     }
 
-    fun applyGain() {
+    override fun applyGain() {
         val gain = if (muted) 0f else volume * masterVolume()
         spectrum.outputGain = gain.coerceIn(0f, 1f)
     }
@@ -114,7 +114,7 @@ class FeedSession(
         }
     }
 
-    fun play() {
+    override fun play() {
         wantPlay = true
         cancelReconnect()
         val gen = ++playGeneration
@@ -126,7 +126,7 @@ class FeedSession(
         }
     }
 
-    fun stop() {
+    override fun stop() {
         wantPlay = false
         playGeneration++
         playJob?.cancel()
@@ -138,7 +138,7 @@ class FeedSession(
         onChanged()
     }
 
-    fun reconnect() {
+    override fun reconnect() {
         if (!wantPlay) {
             play()
             return
@@ -153,7 +153,7 @@ class FeedSession(
         }
     }
 
-    fun dispose() {
+    override fun dispose() {
         stop()
         spectrum.listener = null
     }

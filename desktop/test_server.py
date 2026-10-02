@@ -33,13 +33,32 @@ class RewriteTests(unittest.TestCase):
         talkgroups = {"30433", "30434", "30435", "30436", "30437", "30438"}
         self.assertTrue(talkgroups.isdisjoint(ids))
         self.assertEqual(
-            [call["talkgroups"] for call in server.DEFAULT_CALLS],
-            [["30433"], ["30434", "30435"], ["30436", "30437", "30438"]],
+            [call["talkgroup"] for call in server.DEFAULT_CALLS],
+            ["30433", "30434", "30435", "30436", "30437", "30438"],
         )
         for call in server.DEFAULT_CALLS:
             self.assertFalse(str(call["id"]).isdigit())
-            for url in call["urls"]:
-                self.assertIn("/calls/tg/11341/", url)
+            self.assertNotIn("url", call)
+            self.assertNotIn("urls", call)
+
+    def test_call_audio_url_uses_payload_system_id(self) -> None:
+        url = server.call_audio_url(
+            {
+                "systemId": 4777,
+                "filename": "1790973000-30433",
+                "enc": "m4a",
+                "hash": "abc123",
+            }
+        )
+        self.assertEqual(
+            "https://calls.broadcastify.com/abc123/4777/1790973000-30433.m4a",
+            url,
+        )
+        self.assertIsNone(
+            server.call_audio_url(
+                {"systemId": 4777, "filename": "../x", "enc": "m4a", "hash": "abc"}
+            )
+        )
 
     def test_listen_id_rejects_calls_card_id(self) -> None:
         with self.assertRaises(ValueError):

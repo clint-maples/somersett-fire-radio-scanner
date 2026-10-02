@@ -1,12 +1,10 @@
 package com.clintmaples.broadcastifyscanner.data
 
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-
 enum class FeedKind {
     /** Classic Broadcastify listen feed. Plays in-app via the HLS popout scrape. */
     LISTEN,
 
-    /** Broadcastify Calls talkgroup. Opens the public Calls page. Not an HLS feed ID. */
+    /** Broadcastify Calls talkgroup. Plays in-app as discrete call clips. */
     CALLS,
 }
 
@@ -16,18 +14,15 @@ enum class FeedRegion {
     OTHER,
 }
 
-data class CallsLink(
-    val talkgroup: String,
-    val label: String,
-    val url: String,
-)
-
 data class Feed(
     val feedId: String,
     val name: String,
     val kind: FeedKind = FeedKind.LISTEN,
     val region: FeedRegion = FeedRegion.OTHER,
-    val callsLinks: List<CallsLink> = emptyList(),
+    /** Trunked system sid. Calls only. Never a listen feed id. */
+    val systemSid: String = "",
+    /** Decimal talkgroup. Calls only. Never sent to the listen popout scraper. */
+    val talkgroup: String = "",
 )
 
 data class FeedMeta(
@@ -55,7 +50,8 @@ data class FeedUiState(
     val wantPlay: Boolean = false,
     val kind: FeedKind = FeedKind.LISTEN,
     val region: FeedRegion = FeedRegion.OTHER,
-    val callsLinks: List<CallsLink> = emptyList(),
+    val talkgroup: String = "",
+    val systemSid: String = "",
 )
 
 data class ScannerUiState(
@@ -75,41 +71,15 @@ sealed class ScannerListItem {
     }
 }
 
-/**
- * Public Broadcastify Calls pages for Washoe NSRS / TMFPD.
- * System sid 11341. These talkgroup numbers are not listen feed IDs.
- */
-object CallsPages {
+/** Washoe NSRS / TMFPD talkgroups. These are Calls groups, not listen feed IDs. */
+object CallsCatalog {
     const val SYSTEM_SID = "11341"
-    const val BADGE = "Calls (opens Broadcastify)"
 
-    fun talkgroupUrl(talkgroup: String): String {
-        return "https://www.broadcastify.com/calls/tg/$SYSTEM_SID/$talkgroup"
-    }
+    fun groupKey(systemSid: String, talkgroup: String): String = "$systemSid-$talkgroup"
 
-    fun link(talkgroup: String, label: String): CallsLink {
-        return CallsLink(
-            talkgroup = talkgroup,
-            label = label,
-            url = talkgroupUrl(talkgroup),
-        )
-    }
+    fun cardId(systemSid: String, talkgroup: String): String = "calls-$systemSid-$talkgroup"
 
-    /**
-     * True only for a public https Calls talkgroup page on this system.
-     * Rejects listen popout URLs and anything that is not sid 11341.
-     */
-    fun isPublicCallsTalkgroupUrl(url: String): Boolean {
-        val parsed = url.toHttpUrlOrNull() ?: return false
-        if (!BroadcastifyAllowlist.isAllowedUrl(parsed)) return false
-        if (parsed.querySize != 0) return false
-        val segments = parsed.pathSegments
-        if (segments.size != 4) return false
-        if (segments[0] != "calls" || segments[1] != "tg") return false
-        if (segments[2] != SYSTEM_SID) return false
-        val tg = segments[3]
-        return tg.isNotEmpty() && tg.all { it.isDigit() }
-    }
+    fun isTalkgroup(value: String): Boolean = value.isNotEmpty() && value.all { it.isDigit() }
 }
 
 object FeedSections {
@@ -124,6 +94,15 @@ object FeedSections {
 }
 
 object DefaultFeeds {
+    private fun calls(talkgroup: String, name: String) = Feed(
+        feedId = CallsCatalog.cardId(CallsCatalog.SYSTEM_SID, talkgroup),
+        name = name,
+        kind = FeedKind.CALLS,
+        region = FeedRegion.NEVADA,
+        systemSid = CallsCatalog.SYSTEM_SID,
+        talkgroup = talkgroup,
+    )
+
     private val renoSparks = Feed(
         feedId = "7364",
         name = "Reno and Sparks Police and Fire",
@@ -150,34 +129,12 @@ object DefaultFeeds {
     )
 
     val ALL: List<Feed> = listOf(
-        Feed(
-            feedId = "calls-11341-30433",
-            name = "NSRS Washoe TMFPD Red Dispatch",
-            kind = FeedKind.CALLS,
-            region = FeedRegion.NEVADA,
-            callsLinks = listOf(CallsPages.link("30433", "Red Dispatch")),
-        ),
-        Feed(
-            feedId = "calls-11341-command",
-            name = "TMFPD Command 1 + Command 2",
-            kind = FeedKind.CALLS,
-            region = FeedRegion.NEVADA,
-            callsLinks = listOf(
-                CallsPages.link("30434", "Command 1"),
-                CallsPages.link("30435", "Command 2"),
-            ),
-        ),
-        Feed(
-            feedId = "calls-11341-tac",
-            name = "TMFPD Tac 4–6",
-            kind = FeedKind.CALLS,
-            region = FeedRegion.NEVADA,
-            callsLinks = listOf(
-                CallsPages.link("30436", "Tac 4"),
-                CallsPages.link("30437", "Tac 5"),
-                CallsPages.link("30438", "Tac 6"),
-            ),
-        ),
+        calls("30433", "NSRS Washoe TMFPD Red Dispatch"),
+        calls("30434", "TMFPD Command 1"),
+        calls("30435", "TMFPD Command 2"),
+        calls("30436", "TMFPD Tac 4"),
+        calls("30437", "TMFPD Tac 5"),
+        calls("30438", "TMFPD Tac 6"),
         renoSparks,
         eastPlacer,
         neuWest,
@@ -193,6 +150,10 @@ object DefaultFeeds {
         return ALL.firstOrNull { it.kind == FeedKind.LISTEN && it.feedId == feedId }
     }
 
+    fun knownCalls(talkgroup: String): Feed? {
+        return ALL.firstOrNull { it.kind == FeedKind.CALLS && it.talkgroup == talkgroup }
+    }
+
     /**
      * Prepend Nevada defaults that an older install does not have yet.
      * Leaves the saved order of everything else alone, including the three
@@ -203,7 +164,12 @@ object DefaultFeeds {
         val newcomers = ALL.filter { feed ->
             feed.region == FeedRegion.NEVADA && feed.feedId !in have
         }
-        return newcomers + existing
+        return dedupe(newcomers + existing)
+    }
+
+    fun dedupe(feeds: List<Feed>): List<Feed> {
+        val seen = HashSet<String>()
+        return feeds.filter { seen.add(it.feedId) }
     }
 }
 

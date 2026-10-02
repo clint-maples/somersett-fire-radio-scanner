@@ -1,11 +1,12 @@
 package com.clintmaples.broadcastifyscanner
 
-import com.clintmaples.broadcastifyscanner.data.CallsPages
+import com.clintmaples.broadcastifyscanner.data.CallsCatalog
 import com.clintmaples.broadcastifyscanner.data.DefaultFeeds
 import com.clintmaples.broadcastifyscanner.data.Feed
 import com.clintmaples.broadcastifyscanner.data.FeedKind
 import com.clintmaples.broadcastifyscanner.data.FeedRegion
 import com.clintmaples.broadcastifyscanner.data.FeedStatus
+import com.clintmaples.broadcastifyscanner.data.FeedStore
 import com.clintmaples.broadcastifyscanner.data.FeedUiState
 import com.clintmaples.broadcastifyscanner.data.ScannerListItem
 import com.clintmaples.broadcastifyscanner.data.buildScannerList
@@ -16,12 +17,15 @@ import org.junit.Test
 
 class DefaultFeedsTest {
     @Test
-    fun defaults_putCallsThenRenoThenCaliforniaListenFeeds() {
+    fun defaults_putEachTalkgroupThenRenoThenCaliforniaListenFeeds() {
         assertEquals(
             listOf(
                 "calls-11341-30433",
-                "calls-11341-command",
-                "calls-11341-tac",
+                "calls-11341-30434",
+                "calls-11341-30435",
+                "calls-11341-30436",
+                "calls-11341-30437",
+                "calls-11341-30438",
                 "7364",
                 "14826",
                 "47365",
@@ -29,11 +33,19 @@ class DefaultFeedsTest {
             ),
             DefaultFeeds.ALL.map { it.feedId },
         )
-        assertEquals(FeedKind.CALLS, DefaultFeeds.ALL[0].kind)
-        assertEquals(FeedKind.CALLS, DefaultFeeds.ALL[1].kind)
-        assertEquals(FeedKind.CALLS, DefaultFeeds.ALL[2].kind)
-        assertEquals(FeedKind.LISTEN, DefaultFeeds.ALL[3].kind)
-        assertEquals("Reno and Sparks Police and Fire", DefaultFeeds.ALL[3].name)
+        val calls = DefaultFeeds.ALL.filter { it.kind == FeedKind.CALLS }
+        assertEquals(
+            listOf("30433", "30434", "30435", "30436", "30437", "30438"),
+            calls.map { it.talkgroup },
+        )
+        calls.forEach { feed ->
+            assertEquals(CallsCatalog.SYSTEM_SID, feed.systemSid)
+            assertEquals(FeedRegion.NEVADA, feed.region)
+            assertFalse(feed.feedId.all { ch -> ch.isDigit() })
+            assertFalse(feed.talkgroup == feed.feedId)
+        }
+        assertEquals(FeedKind.LISTEN, DefaultFeeds.ALL[6].kind)
+        assertEquals("Reno and Sparks Police and Fire", DefaultFeeds.ALL[6].name)
         assertEquals(
             listOf(
                 "East Placer and Nevada Counties CAL FIRE NEU - Kings Beach Area",
@@ -50,45 +62,6 @@ class DefaultFeedsTest {
         assertEquals(listOf("7364", "14826", "47365", "47367"), listen)
         val talkgroups = listOf("30433", "30434", "30435", "30436", "30437", "30438")
         assertTrue(talkgroups.none { it in listen })
-
-        val dispatch = DefaultFeeds.ALL[0]
-        assertEquals(listOf("30433"), dispatch.callsLinks.map { it.talkgroup })
-        assertEquals(
-            "https://www.broadcastify.com/calls/tg/11341/30433",
-            dispatch.callsLinks.single().url,
-        )
-        assertEquals(
-            listOf("30434", "30435"),
-            DefaultFeeds.ALL[1].callsLinks.map { it.talkgroup },
-        )
-        assertEquals(
-            listOf("30436", "30437", "30438"),
-            DefaultFeeds.ALL[2].callsLinks.map { it.talkgroup },
-        )
-        DefaultFeeds.ALL.filter { it.kind == FeedKind.CALLS }.forEach { feed ->
-            assertFalse(feed.feedId.all { ch -> ch.isDigit() })
-            assertTrue(feed.callsLinks.isNotEmpty())
-            feed.callsLinks.forEach { link ->
-                assertTrue(CallsPages.isPublicCallsTalkgroupUrl(link.url))
-                assertTrue(link.url.endsWith("/${link.talkgroup}"))
-                assertFalse(link.talkgroup == feed.feedId)
-            }
-        }
-    }
-
-    @Test
-    fun callsUrl_rejectsListenPopoutAndOtherSystems() {
-        assertFalse(
-            CallsPages.isPublicCallsTalkgroupUrl(
-                "https://www.broadcastify.com/listen/feed/7364",
-            ),
-        )
-        assertFalse(
-            CallsPages.isPublicCallsTalkgroupUrl(
-                "https://www.broadcastify.com/calls/tg/99999/30433",
-            ),
-        )
-        assertFalse(CallsPages.isPublicCallsTalkgroupUrl("http://www.broadcastify.com/calls/tg/11341/30433"))
     }
 
     @Test
@@ -98,8 +71,11 @@ class DefaultFeedsTest {
             listOf(
                 "S:Nevada / Washoe",
                 "C:calls-11341-30433",
-                "C:calls-11341-command",
-                "C:calls-11341-tac",
+                "C:calls-11341-30434",
+                "C:calls-11341-30435",
+                "C:calls-11341-30436",
+                "C:calls-11341-30437",
+                "C:calls-11341-30438",
                 "C:7364",
                 "S:California / NEU–TNF",
                 "C:14826",
@@ -126,8 +102,11 @@ class DefaultFeedsTest {
         assertEquals(
             listOf(
                 "calls-11341-30433",
-                "calls-11341-command",
-                "calls-11341-tac",
+                "calls-11341-30434",
+                "calls-11341-30435",
+                "calls-11341-30436",
+                "calls-11341-30437",
+                "calls-11341-30438",
                 "7364",
                 "14826",
                 "47365",
@@ -136,7 +115,28 @@ class DefaultFeedsTest {
             merged.map { it.feedId },
         )
         assertEquals(FeedKind.CALLS, merged[0].kind)
-        assertEquals(FeedKind.LISTEN, merged[3].kind)
+        assertEquals(FeedKind.LISTEN, merged[6].kind)
+    }
+
+    @Test
+    fun decode_expandsOldGroupedDeepLinksIntoOneCardPerTalkgroup() {
+        val raw = """
+            [
+              {"feedId":"calls-11341-30433","name":"NSRS Washoe TMFPD Red Dispatch","kind":"calls","region":"nevada","callsLinks":[{"talkgroup":"30433","label":"Red Dispatch","url":"https://www.broadcastify.com/calls/tg/11341/30433"}]},
+              {"feedId":"calls-11341-command","name":"TMFPD Command 1 + Command 2","kind":"calls","region":"nevada","callsLinks":[{"talkgroup":"30434","label":"Command 1","url":"https://www.broadcastify.com/calls/tg/11341/30434"},{"talkgroup":"30435","label":"Command 2","url":"https://www.broadcastify.com/calls/tg/11341/30435"}]},
+              {"feedId":"7364","name":"Reno and Sparks Police and Fire","kind":"listen","region":"nevada"}
+            ]
+        """.trimIndent()
+        val feeds = DefaultFeeds.dedupe(FeedStore.decode(raw))
+        assertEquals(
+            listOf("calls-11341-30433", "calls-11341-30434", "calls-11341-30435", "7364"),
+            feeds.map { it.feedId },
+        )
+        assertEquals("30434", feeds[1].talkgroup)
+        assertEquals(CallsCatalog.SYSTEM_SID, feeds[1].systemSid)
+        assertEquals("TMFPD Command 1", feeds[1].name)
+        assertTrue(FeedStore.encode(feeds).contains(""""talkgroup":"30434""""))
+        assertFalse(FeedStore.encode(feeds).contains("broadcastify.com"))
     }
 
     private fun Feed.toPreview(): FeedUiState {
@@ -146,7 +146,8 @@ class DefaultFeedsTest {
             status = FeedStatus.IDLE,
             kind = kind,
             region = region,
-            callsLinks = callsLinks,
+            talkgroup = talkgroup,
+            systemSid = systemSid,
         )
     }
 }

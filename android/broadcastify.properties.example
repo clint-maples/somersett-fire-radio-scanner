@@ -1,0 +1,8 @@
+# Copy to android/broadcastify.properties (gitignored) or export the env vars.
+# Listener account for in-app Calls. Never commit the filled-in file.
+#
+#   BROADCASTIFY_USERNAME
+#   BROADCASTIFY_PASSWORD
+#
+broadcastify.username=
+broadcastify.password=

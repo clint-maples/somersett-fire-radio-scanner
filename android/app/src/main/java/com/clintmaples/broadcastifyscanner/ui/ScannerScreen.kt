@@ -47,8 +47,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.clintmaples.broadcastifyscanner.R
-import com.clintmaples.broadcastifyscanner.data.CallsLink
-import com.clintmaples.broadcastifyscanner.data.CallsPages
 import com.clintmaples.broadcastifyscanner.data.FeedKind
 import com.clintmaples.broadcastifyscanner.data.FeedStatus
 import com.clintmaples.broadcastifyscanner.data.FeedUiState
@@ -84,8 +82,6 @@ fun ScannerScreen(
     onKeepAwake: (Boolean) -> Unit,
     onToggleAdd: () -> Unit,
     onAddFeed: (String, String) -> Unit,
-    onOpenCalls: (String) -> Unit,
-    onOpenCallLink: (String, String) -> Unit,
     onAttachSpectrum: (String, SpectrumView?) -> Unit,
 ) {
     Column(
@@ -104,7 +100,7 @@ fun ScannerScreen(
             onToggleAdd = onToggleAdd,
         )
         Text(
-            text = "Top group is Nevada / Washoe. Calls cards open Broadcastify in the browser (not in-app audio). Listen feeds, including Reno/Sparks 7364 and California / NEU–TNF below, play here. Scanners are often silent between transmissions. Free feeds may play a short preroll. Spectrum still moves when muted.",
+            text = "Top group is Nevada / Washoe. TMFPD Calls play here as each transmission arrives (quiet between calls is normal). Reno/Sparks 7364 and California / NEU–TNF below stay on the listen feeds. Free listen feeds may play a short preroll. Spectrum still moves when muted.",
             color = Muted,
             fontSize = 12.sp,
             lineHeight = 16.sp,
@@ -127,25 +123,16 @@ fun ScannerScreen(
                     is ScannerListItem.Section -> SectionHeader(row.title)
                     is ScannerListItem.Card -> {
                         val feed = row.feed
-                        if (feed.kind == FeedKind.CALLS) {
-                            CallsCard(
-                                feed = feed,
-                                onOpenAll = { onOpenCalls(feed.feedId) },
-                                onOpenLink = { link -> onOpenCallLink(feed.feedId, link.url) },
-                                onRemove = { onRemove(feed.feedId) },
-                            )
-                        } else {
-                            FeedCard(
-                                feed = feed,
-                                onPlay = { onPlay(feed.feedId) },
-                                onStop = { onStop(feed.feedId) },
-                                onMute = { onMute(feed.feedId) },
-                                onReconnect = { onReconnect(feed.feedId) },
-                                onRemove = { onRemove(feed.feedId) },
-                                onVolume = { onFeedVolume(feed.feedId, it) },
-                                onAttachSpectrum = { view -> onAttachSpectrum(feed.feedId, view) },
-                            )
-                        }
+                        FeedCard(
+                            feed = feed,
+                            onPlay = { onPlay(feed.feedId) },
+                            onStop = { onStop(feed.feedId) },
+                            onMute = { onMute(feed.feedId) },
+                            onReconnect = { onReconnect(feed.feedId) },
+                            onRemove = { onRemove(feed.feedId) },
+                            onVolume = { onFeedVolume(feed.feedId, it) },
+                            onAttachSpectrum = { view -> onAttachSpectrum(feed.feedId, view) },
+                        )
                     }
                 }
             }
@@ -176,66 +163,6 @@ private fun SectionHeader(title: String) {
                 .height(2.dp)
                 .background(Accent.copy(alpha = 0.55f)),
         )
-    }
-}
-
-@OptIn(ExperimentalLayoutApi::class)
-@Composable
-private fun CallsCard(
-    feed: FeedUiState,
-    onOpenAll: () -> Unit,
-    onOpenLink: (CallsLink) -> Unit,
-    onRemove: () -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(BgCard)
-            .border(1.dp, Info.copy(alpha = 0.65f), RoundedCornerShape(8.dp))
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Row(verticalAlignment = Alignment.Top) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    feed.name,
-                    color = TextPrimary,
-                    fontWeight = FontWeight.SemiBold,
-                    fontSize = 15.sp,
-                    maxLines = 3,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(CallsPages.BADGE, color = Info, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                Text(
-                    "Not in-app audio. Opens the public Broadcastify Calls page.",
-                    color = Muted,
-                    fontSize = 12.sp,
-                )
-            }
-        }
-        Text(
-            feed.callsLinks.joinToString("  ·  ") { "${it.label} TG ${it.talkgroup}" },
-            color = TextPrimary,
-            fontSize = 13.sp,
-        )
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(6.dp),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            SmallButton(
-                if (feed.callsLinks.size > 1) "Open all" else "Open Broadcastify",
-                onOpenAll,
-            )
-            feed.callsLinks.forEach { link ->
-                if (feed.callsLinks.size > 1) {
-                    SmallButton("${link.label} · TG ${link.talkgroup}", { onOpenLink(link) })
-                }
-            }
-            TextButton(onClick = onRemove) {
-                Text("✕", color = Muted)
-            }
-        }
     }
 }
 
@@ -396,7 +323,11 @@ private fun FeedCard(
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis,
                 )
-                Text("ID ${feed.feedId}", color = Muted, fontSize = 11.sp)
+                Text(
+                    if (feed.kind == FeedKind.CALLS) "TG ${feed.talkgroup} · Calls" else "ID ${feed.feedId}",
+                    color = Muted,
+                    fontSize = 11.sp,
+                )
             }
             StatusChip(feed.status, feed.statusDetail)
         }
