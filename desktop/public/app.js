@@ -9,44 +9,28 @@ const SILENT_WAV =
 
 const CALLS_SYSTEM = '11341';
 
-function callsUrl(tg) {
-  return `https://www.broadcastify.com/calls/tg/${CALLS_SYSTEM}/${tg}`;
-}
-
-function callsLink(tg, label) {
-  return { talkgroup: String(tg), label, url: callsUrl(tg) };
+function callsCard(tg, name) {
+  return {
+    kind: 'calls',
+    feedId: `calls-${CALLS_SYSTEM}-${tg}`,
+    name,
+    region: 'nevada',
+    systemSid: CALLS_SYSTEM,
+    talkgroup: String(tg),
+  };
 }
 
 /**
- * Calls entries are deep links, not listen feed IDs.
+ * Calls entries are talkgroups, not listen feed IDs.
  * Talkgroups 30433–30438 must never be sent to the HLS scraper.
  */
 const DEFAULT_FEEDS = [
-  {
-    kind: 'calls',
-    feedId: 'calls-11341-30433',
-    name: 'NSRS Washoe TMFPD Red Dispatch',
-    region: 'nevada',
-    callsLinks: [callsLink('30433', 'Red Dispatch')],
-  },
-  {
-    kind: 'calls',
-    feedId: 'calls-11341-command',
-    name: 'TMFPD Command 1 + Command 2',
-    region: 'nevada',
-    callsLinks: [callsLink('30434', 'Command 1'), callsLink('30435', 'Command 2')],
-  },
-  {
-    kind: 'calls',
-    feedId: 'calls-11341-tac',
-    name: 'TMFPD Tac 4–6',
-    region: 'nevada',
-    callsLinks: [
-      callsLink('30436', 'Tac 4'),
-      callsLink('30437', 'Tac 5'),
-      callsLink('30438', 'Tac 6'),
-    ],
-  },
+  callsCard('30433', 'NSRS Washoe TMFPD Red Dispatch'),
+  callsCard('30434', 'TMFPD Command 1'),
+  callsCard('30435', 'TMFPD Command 2'),
+  callsCard('30436', 'TMFPD Tac 4'),
+  callsCard('30437', 'TMFPD Tac 5'),
+  callsCard('30438', 'TMFPD Tac 6'),
   {
     kind: 'listen',
     feedId: '7364',
@@ -92,7 +76,6 @@ function ensureSharedAudioCtx() {
 const els = {
   grid: document.getElementById('feed-grid'),
   tpl: document.getElementById('feed-card-tpl'),
-  callsTpl: document.getElementById('calls-card-tpl'),
   playAll: document.getElementById('btn-play-all'),
   stopAll: document.getElementById('btn-stop-all'),
   masterVol: document.getElementById('master-volume'),
@@ -113,41 +96,34 @@ function readStored(key) {
   return null;
 }
 
-function parseCallsUrl(url) {
+function legacyTalkgroup(link) {
+  const direct = String((link && link.talkgroup) || '').trim();
+  if (/^\d+$/.test(direct)) return direct;
   try {
-    const u = new URL(url);
-    if (u.protocol !== 'https:') return null;
-    const host = u.hostname.toLowerCase().replace(/\.$/, '');
-    if (host !== 'broadcastify.com' && !host.endsWith('.broadcastify.com')) return null;
-    if (u.username || u.password) return null;
-    if (u.port && u.port !== '443') return null;
-    if (u.search || u.hash) return null;
+    const u = new URL(String(link.url || ''));
     const match = u.pathname.match(/^\/calls\/tg\/11341\/(\d+)$/);
-    if (!match) return null;
-    return { talkgroup: match[1], url: `${u.origin}${u.pathname}` };
+    return match ? match[1] : '';
   } catch (_) {
-    return null;
+    return '';
   }
 }
 
+function knownCalls(talkgroup) {
+  return (
+    DEFAULT_FEEDS.find((feed) => feed.kind === 'calls' && feed.talkgroup === String(talkgroup)) ||
+    null
+  );
+}
+
 function cloneFeed(feed) {
-  const links = (feed.callsLinks || [])
-    .map((link) => {
-      const parsed = parseCallsUrl(link.url);
-      if (!parsed) return null;
-      return {
-        talkgroup: parsed.talkgroup,
-        label: link.label || `TG ${parsed.talkgroup}`,
-        url: parsed.url,
-      };
-    })
-    .filter(Boolean);
   return {
     kind: feed.kind === 'calls' ? 'calls' : 'listen',
     feedId: String(feed.feedId),
     name: feed.name,
     region: feed.region || 'other',
-    callsLinks: links,
+    systemSid: feed.systemSid || '',
+    talkgroup: feed.talkgroup ? String(feed.talkgroup) : '',
+    callsLinks: Array.isArray(feed.callsLinks) ? feed.callsLinks : [],
   };
 }
 
@@ -170,16 +146,35 @@ function normalizeListen(feed) {
     feedId: id,
     name: feed.name || (known && known.name) || `Feed ${id}`,
     region,
-    callsLinks: [],
   };
 }
 
 function normalizeCalls(feed) {
   const copy = cloneFeed({ ...feed, kind: 'calls' });
-  if (!copy.callsLinks.length) return null;
+  if (copy.callsLinks.length) {
+    return copy.callsLinks
+      .map((link) => {
+        const tg = legacyTalkgroup(link);
+        if (!/^\d+$/.test(tg)) return null;
+        const known = knownCalls(tg);
+        return {
+          kind: 'calls',
+          feedId: `calls-${CALLS_SYSTEM}-${tg}`,
+          name: (known && known.name) || link.label || `TG ${tg}`,
+          region: 'nevada',
+          systemSid: CALLS_SYSTEM,
+          talkgroup: tg,
+        };
+      })
+      .filter(Boolean);
+  }
+  if (!/^\d+$/.test(copy.talkgroup)) return null;
   if (/^\d+$/.test(copy.feedId)) return null;
   if (copy.region !== 'nevada' && copy.region !== 'california') copy.region = 'nevada';
-  copy.name = copy.name || 'Calls';
+  const known = knownCalls(copy.talkgroup);
+  copy.name = copy.name || (known && known.name) || `TG ${copy.talkgroup}`;
+  copy.systemSid = copy.systemSid || CALLS_SYSTEM;
+  delete copy.callsLinks;
   return copy;
 }
 
@@ -200,7 +195,11 @@ function upgradeLegacy(existing) {
 function loadFeeds() {
   const current = readStored(STORAGE_KEY);
   if (current) {
-    const parsed = current.map(normalizeStored).filter(Boolean);
+    const parsed = current.flatMap((feed) => {
+      const normalized = normalizeStored(feed);
+      if (!normalized) return [];
+      return Array.isArray(normalized) ? normalized : [normalized];
+    });
     if (parsed.length) return parsed;
   }
   const legacy = readStored(LEGACY_STORAGE_KEY);
@@ -219,7 +218,8 @@ function saveFeeds() {
         feedId: card.feedId,
         name: card.name,
         region: card.region,
-        callsLinks: card.callsLinks,
+        systemSid: card.systemSid,
+        talkgroup: card.talkgroup,
       };
     }
     return {
@@ -766,52 +766,155 @@ class FeedPlayer {
   }
 }
 
-class CallsCard {
+class CallsPlayer {
   constructor(feed) {
     this.kind = 'calls';
     this.feedId = String(feed.feedId);
     this.name = feed.name || 'Calls';
     this.region = feed.region || 'nevada';
-    this.callsLinks = (feed.callsLinks || []).map((link) => ({ ...link }));
+    this.systemSid = feed.systemSid || CALLS_SYSTEM;
+    this.talkgroup = String(feed.talkgroup);
+    this.wantPlay = false;
+    this.muted = false;
+    this.volume = 1;
+    this.status = 'idle';
+    this.seen = new Set();
+    this.queue = [];
+    this.playingClip = false;
+    this._timer = null;
 
-    const node = els.callsTpl.content.firstElementChild.cloneNode(true);
+    const node = els.tpl.content.firstElementChild.cloneNode(true);
     node.dataset.feedId = this.feedId;
     this.root = node;
-    node.querySelector('.feed-name').textContent = this.name;
-    const tgLine = this.callsLinks
-      .map((link) => `${link.label} TG ${link.talkgroup}`)
-      .join('  ·  ');
-    node.querySelector('.calls-tgs').textContent = tgLine;
-    this.btnOpenAll = node.querySelector('.btn-open-all');
+    this.nameEl = node.querySelector('.feed-name');
+    this.idEl = node.querySelector('.feed-id');
+    this.statusEl = node.querySelector('.status');
+    this.audio = node.querySelector('.feed-audio');
+    this.btnPlay = node.querySelector('.btn-play');
+    this.btnStop = node.querySelector('.btn-stop');
+    this.btnMute = node.querySelector('.btn-mute');
+    this.btnReconnect = node.querySelector('.btn-reconnect');
     this.btnRemove = node.querySelector('.btn-remove');
-    if (this.callsLinks.length > 1) this.btnOpenAll.textContent = 'Open all';
+    this.vol = node.querySelector('.feed-volume');
+    this.nameEl.textContent = this.name;
+    this.idEl.textContent = `TG ${this.talkgroup} · Calls`;
 
-    this.btnOpenAll.addEventListener('click', () => this.openAll());
+    this.btnPlay.addEventListener('click', () => this.play());
+    this.btnStop.addEventListener('click', () => this.stop());
+    this.btnMute.addEventListener('click', () => this.toggleMute());
+    this.btnReconnect.addEventListener('click', () => this.reconnect());
     this.btnRemove.addEventListener('click', () => removeFeed(this.feedId));
+    this.vol.addEventListener('input', () => {
+      this.volume = Number(this.vol.value) / 100;
+      this.applyVolume();
+    });
+    this.audio.addEventListener('ended', () => {
+      this.playingClip = false;
+      this.drain();
+      if (!this.playingClip) this.setStatus(this.wantPlay ? 'playing' : 'idle');
+    });
+    this.audio.addEventListener('error', () => {
+      this.playingClip = false;
+      this.drain();
+    });
+    this.setStatus('idle');
+  }
 
-    const linksEl = node.querySelector('.calls-links');
-    if (this.callsLinks.length > 1) {
-      for (const link of this.callsLinks) {
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'btn btn-sm btn-calls-link';
-        button.textContent = `${link.label} · TG ${link.talkgroup}`;
-        button.addEventListener('click', () => this.openOne(link.url));
-        linksEl.appendChild(button);
-      }
+  ensureAnalyser() {}
+
+  setStatus(status, detail) {
+    this.status = status;
+    const label = detail ? `${status}: ${detail}` : status;
+    this.statusEl.textContent = label;
+    this.statusEl.dataset.status = status;
+    this.btnPlay.disabled = this.wantPlay && status !== 'error';
+    this.btnStop.disabled = !this.wantPlay;
+  }
+
+  applyVolume() {
+    const master = Number(els.masterVol.value) / 100;
+    this.audio.muted = this.muted;
+    this.audio.volume = this.muted ? 0 : Math.max(0, Math.min(1, this.volume * master));
+    this.btnMute.textContent = this.muted ? 'Unmute' : 'Mute';
+  }
+
+  toggleMute() {
+    this.muted = !this.muted;
+    this.applyVolume();
+  }
+
+  play() {
+    this.wantPlay = true;
+    this.setStatus('loading');
+    this.applyVolume();
+    this._schedule(0);
+  }
+
+  stop() {
+    this.wantPlay = false;
+    if (this._timer) clearTimeout(this._timer);
+    this._timer = null;
+    this.queue = [];
+    this.playingClip = false;
+    this.audio.pause();
+    this.audio.removeAttribute('src');
+    this.setStatus('idle');
+  }
+
+  reconnect() {
+    this.seen.clear();
+    this.queue = [];
+    if (!this.wantPlay) this.play();
+    else {
+      this.setStatus('reconnecting');
+      this._schedule(0);
     }
   }
 
-  openAll() {
-    for (const link of this.callsLinks) this.openOne(link.url);
+  _schedule(ms) {
+    if (this._timer) clearTimeout(this._timer);
+    this._timer = setTimeout(() => this._poll(), ms);
   }
 
-  openOne(url) {
-    if (!parseCallsUrl(url)) return;
-    window.open(url, '_blank', 'noopener,noreferrer');
+  async _poll() {
+    if (!this.wantPlay) return;
+    try {
+      const res = await fetch(`/api/calls/poll/${this.talkgroup}`, { cache: 'no-store' });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      for (const call of data.calls || []) {
+        if (!call || !call.key || this.seen.has(call.key)) continue;
+        this.seen.add(call.key);
+        this.queue.push(call);
+      }
+      if (this.seen.size > 200) this.seen = new Set([...this.seen].slice(-120));
+      if (this.queue.length > 8) this.queue.splice(0, this.queue.length - 8);
+      if (this.status === 'loading' || this.status === 'reconnecting' || this.status === 'error') {
+        this.setStatus('playing');
+      }
+      this.drain();
+      this._schedule(3000);
+    } catch (err) {
+      this.setStatus('error', String(err.message || err).slice(0, 48));
+      this._schedule(4000);
+    }
+  }
+
+  drain() {
+    if (!this.wantPlay || this.playingClip || !this.queue.length) return;
+    const call = this.queue.shift();
+    if (!call || !call.audio || !String(call.audio).startsWith('/api/calls/audio/')) return;
+    this.playingClip = true;
+    this.setStatus('playing', String(call.display || '').slice(0, 42));
+    this.audio.src = call.audio;
+    this.applyVolume();
+    this.audio.play().catch(() => {
+      this.playingClip = false;
+    });
   }
 
   dispose() {
+    this.stop();
     this.root.remove();
   }
 }
@@ -829,9 +932,11 @@ function addListen(feedId, name, region) {
 
 function addCalls(feed) {
   const normalized = normalizeCalls(feed);
-  if (!normalized || players.has(normalized.feedId)) return;
-  const card = new CallsCard(normalized);
-  players.set(normalized.feedId, card);
+  const list = Array.isArray(normalized) ? normalized : normalized ? [normalized] : [];
+  for (const item of list) {
+    if (!item || players.has(item.feedId)) continue;
+    players.set(item.feedId, new CallsPlayer(item));
+  }
   layoutFeeds();
   saveFeeds();
 }
@@ -863,7 +968,7 @@ function init() {
   }
 
   els.playAll.addEventListener('click', () => {
-    const list = [...players.values()].filter((p) => p.kind !== 'calls');
+    const list = [...players.values()];
     // CRITICAL: unlock synchronously before any network await
     unlockAudioGesture(list);
     for (const p of list) {
@@ -873,15 +978,11 @@ function init() {
   });
 
   els.stopAll.addEventListener('click', () => {
-    for (const p of players.values()) {
-      if (p.kind !== 'calls') p.stop();
-    }
+    for (const p of players.values()) p.stop();
   });
 
   els.masterVol.addEventListener('input', () => {
-    for (const p of players.values()) {
-      if (p.kind !== 'calls') p.applyVolume();
-    }
+    for (const p of players.values()) p.applyVolume();
   });
 
   els.settingsBtn.addEventListener('click', () => {

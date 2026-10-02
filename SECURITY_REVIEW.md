@@ -6,7 +6,7 @@
 **Remediation:** 0.3.0 security release. Repo: `https://github.com/clint-maples/somersett-fire-radio-scanner`  
 **Method:** Source review of Kotlin, manifest, Gradle, and unit tests; static inspection of the 0.1.0 APK. No dynamic instrumented tests, no MITM lab, no Play Console review.
 
-No Broadcastify login, cookies, passwords, or API keys — that remains a hard product constraint.
+0.3.0 had no Broadcastify login. **0.4.1** plays Washoe Calls talkgroups with a listener session. The release build injects `BROADCASTIFY_USERNAME` / `BROADCASTIFY_PASSWORD` into `BuildConfig` from the environment or gitignored `android/broadcastify.properties`. Those values are not committed. The cookie `bcfyuser1` stays in process memory. Listen HLS playback is unchanged and still has no cookie jar.
 
 ---
 
@@ -34,7 +34,7 @@ No Broadcastify login, cookies, passwords, or API keys — that remains a hard p
 
 ## Executive summary
 
-The Android app is a **local, unofficial Broadcastify listener**. It scrapes `popout.php` for a short-lived HLS path token, then plays that playlist with Media3/ExoPlayer. There is **no Broadcastify login, cookie jar, password, or API key**.
+The Android app is a **local, unofficial Broadcastify listener**. Listen feeds scrape `popout.php` for a short-lived HLS path token, then play that playlist with Media3/ExoPlayer. **0.4.1** also logs in as a Broadcastify listener for Washoe Calls talkgroups (cookie `bcfyuser1` in memory). The listener username and password are compiled into the release APK from build-time env and are extractable from that binary. There is no developer API key.
 
 **Overall residual risk after 0.3.0 remediations: Low** for a personal sideload — provided the release keystore stays off-repo and 0.3.0 is signed with it before anyone else installs.
 
@@ -54,13 +54,14 @@ The 0.1.0 review rated the then-current tree **Medium**, driven by debug-signed 
 
 | Step | Behavior | Evidence |
 |---|---|---|
-| Configure | User adds numeric Broadcastify **listen** feed IDs. 0.4.0 defaults: Calls deep links (TGs 30433 / 30434+30435 / 30436–30438, system 11341 — browser only, not scraped) then listen 7364, 14826, 47365, 47367. | `ScannerScreen.kt` filters input to digits; `DefaultFeeds` in `Feed.kt`. Calls URLs are allowlisted public `/calls/tg/11341/` pages. |
+| Configure | User adds numeric Broadcastify **listen** feed IDs. 0.4.1 defaults: Calls talkgroups 30433–30438 on sid 11341 (in-app clips, not scraped as listen IDs) then listen 7364, 14826, 47365, 47367. | `DefaultFeeds` in `Feed.kt`. |
 | Resolve | `GET https://www.broadcastify.com/listen/feed/popout.php?feedId=<digits>` with a desktop Chrome User-Agent. Regex-parse `hlsUrl` / `feedName`. Redirects and the final URL must stay on allowlisted Broadcastify hosts. | `BroadcastifyClient.kt`, `BroadcastifyAllowlist.kt` |
-| Play | Media3 ExoPlayer loads the HLS URL only after the same allowlist check, via OkHttp (no cross-protocol redirects). On 401/403/parse errors, wait 4s and scrape again. | `FeedSession.kt` |
-| Persist | Feed ID + display name, master volume, keep-awake flag. **Not** the HLS URL. Auto Backup off. | `FeedStore.kt`, manifest |
+| Play (listen) | Media3 ExoPlayer loads the HLS URL only after the same allowlist check, via OkHttp (no cross-protocol redirects). On 401/403/parse errors, wait 4s and scrape again. | `FeedSession.kt` |
+| Play (Calls) | Listener login to `POST /login/` stores cookie `bcfyuser1` in memory. Poll `POST /calls/apis/live-calls` with `groups[]={sid}-{tg}`. Play `https://calls.broadcastify.com/...` with Referer and that cookie. Audio URL must pass the same allowlist. | `CallsClient.kt`, `CallsSession.kt` |
+| Persist | Feed ID + display name, kind, region, sid, talkgroup, master volume, keep-awake flag. **Not** the HLS URL, cookie, or password. Auto Backup off. | `FeedStore.kt`, manifest |
 | Background | Non-exported `mediaPlayback` foreground service + optional `POST_NOTIFICATIONS`. | `PlaybackService.kt`, `AndroidManifest.xml` |
 
-Premium / logged-in Broadcastify sessions are explicitly **not implemented** (root `README.md`).
+Listen HLS still has no cookie. Calls uses one in-memory listener session shared by the TMFPD cards. The release APK contains the listener password in `BuildConfig` (personal sideload). Do not redistribute that APK.
 
 ### Assets
 

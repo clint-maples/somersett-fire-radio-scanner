@@ -2,15 +2,17 @@ package com.clintmaples.broadcastifyscanner
 
 import android.app.Application
 import com.clintmaples.broadcastifyscanner.data.BroadcastifyClient
-import com.clintmaples.broadcastifyscanner.data.CallsOpener
+import com.clintmaples.broadcastifyscanner.data.CallsAuth
+import com.clintmaples.broadcastifyscanner.data.CallsCatalog
+import com.clintmaples.broadcastifyscanner.data.CallsClient
 import com.clintmaples.broadcastifyscanner.data.DefaultFeeds
 import com.clintmaples.broadcastifyscanner.data.Feed
 import com.clintmaples.broadcastifyscanner.data.FeedKind
 import com.clintmaples.broadcastifyscanner.data.FeedRegion
-import com.clintmaples.broadcastifyscanner.data.FeedStatus
 import com.clintmaples.broadcastifyscanner.data.FeedStore
-import com.clintmaples.broadcastifyscanner.data.FeedUiState
 import com.clintmaples.broadcastifyscanner.data.ScannerUiState
+import com.clintmaples.broadcastifyscanner.player.CallsSession
+import com.clintmaples.broadcastifyscanner.player.FeedPlayer
 import com.clintmaples.broadcastifyscanner.player.FeedSession
 import com.clintmaples.broadcastifyscanner.player.PlaybackService
 import com.clintmaples.broadcastifyscanner.player.SpectrumView
@@ -27,9 +29,15 @@ import kotlinx.coroutines.withContext
 class ScannerController(private val app: Application) {
     private val store = FeedStore(app)
     private val client = BroadcastifyClient()
+    private val callsClient = CallsClient()
+    private val callsAuth = CallsAuth(
+        username = BuildConfig.BROADCASTIFY_USERNAME,
+        password = BuildConfig.BROADCASTIFY_PASSWORD,
+        client = callsClient,
+    )
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val order = mutableListOf<Feed>()
-    private val sessions = linkedMapOf<String, FeedSession>()
+    private val sessions = linkedMapOf<String, FeedPlayer>()
 
     private val _state = MutableStateFlow(ScannerUiState())
     val state: StateFlow<ScannerUiState> = _state.asStateFlow()
@@ -112,24 +120,9 @@ class ScannerController(private val app: Application) {
         if (typed.isEmpty()) {
             scope.launch {
                 runCatching { withContext(Dispatchers.IO) { client.fetchFeedMeta(id) } }
-                    .onSuccess { meta -> sessions[id]?.rename(meta.name) }
+                    .onSuccess { meta -> (sessions[id] as? FeedSession)?.rename(meta.name) }
             }
         }
-    }
-
-    /**
-     * Opens every Calls link on the card, or just [url] when that link belongs to the card.
-     * Listen feeds are ignored.
-     */
-    fun openCalls(feedId: String, url: String? = null) {
-        val feed = order.firstOrNull { it.feedId == feedId } ?: return
-        if (feed.kind != FeedKind.CALLS) return
-        val urls = if (url == null) {
-            feed.callsLinks.map { it.url }
-        } else {
-            feed.callsLinks.filter { it.url == url }.map { it.url }
-        }
-        CallsOpener.open(app, urls)
     }
 
     fun removeFeed(feedId: String) {
@@ -148,15 +141,28 @@ class ScannerController(private val app: Application) {
     private fun addEntry(feed: Feed, persist: Boolean) {
         if (order.any { it.feedId == feed.feedId }) return
         if (feed.kind == FeedKind.CALLS) {
-            if (feed.feedId.all { it.isDigit() }) return
-            if (feed.callsLinks.isEmpty()) return
-            order += feed
+            val tg = feed.talkgroup.trim()
+            val sid = feed.systemSid.trim().ifBlank { CallsCatalog.SYSTEM_SID }
+            if (!CallsCatalog.isTalkgroup(tg) || !CallsCatalog.isTalkgroup(sid)) return
+            if (feed.feedId.all { it.isDigit() } || sessions.containsKey(feed.feedId)) return
+            val calls = feed.copy(systemSid = sid, talkgroup = tg)
+            order += calls
+            sessions[calls.feedId] = CallsSession(
+                initial = calls,
+                appContext = app,
+                scope = scope,
+                auth = callsAuth,
+                client = callsClient,
+                masterVolume = { _state.value.masterVolume },
+                onChanged = { publish() },
+                onPlayingChanged = { syncService() },
+            )
         } else {
             val id = feed.feedId.trim()
             if (id.isEmpty() || !id.all { it.isDigit() } || sessions.containsKey(id)) return
-            val listen = feed.copy(feedId = id, kind = FeedKind.LISTEN, callsLinks = emptyList())
+            val listen = feed.copy(feedId = id, kind = FeedKind.LISTEN, systemSid = "", talkgroup = "")
             order += listen
-            val session = FeedSession(
+            sessions[id] = FeedSession(
                 initial = listen,
                 appContext = app,
                 scope = scope,
@@ -165,7 +171,6 @@ class ScannerController(private val app: Application) {
                 onChanged = { publish() },
                 onPlayingChanged = { syncService() },
             )
-            sessions[id] = session
         }
         if (persist) persistFeeds()
     }
@@ -186,26 +191,21 @@ class ScannerController(private val app: Application) {
             current.copy(
                 feeds = order.map { feed ->
                     val session = sessions[feed.feedId]
-                    if (session != null) {
-                        session.uiState(feed.region)
-                    } else {
-                        callsUi(feed)
-                    }
+                    session?.uiState(feed.region) ?: feed.toIdle()
                 },
             )
         }
     }
 
-    private fun callsUi(feed: Feed): FeedUiState {
-        return FeedUiState(
-            feedId = feed.feedId,
-            name = feed.name,
-            status = FeedStatus.IDLE,
-            kind = FeedKind.CALLS,
-            region = feed.region,
-            callsLinks = feed.callsLinks,
-        )
-    }
+    private fun Feed.toIdle() = com.clintmaples.broadcastifyscanner.data.FeedUiState(
+        feedId = feedId,
+        name = name,
+        status = com.clintmaples.broadcastifyscanner.data.FeedStatus.IDLE,
+        kind = kind,
+        region = region,
+        talkgroup = talkgroup,
+        systemSid = systemSid,
+    )
 
     private fun syncService() {
         val n = playingCount()

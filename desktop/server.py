@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
+import http.cookiejar
 import json
+import os
 import re
+import secrets
 import urllib.error
+import urllib.parse
 import urllib.request
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -34,35 +38,183 @@ DEFAULT_FEEDS = [
     {"feedId": "47367", "name": "Tahoe National Forest West"},
 ]
 
-# Public Broadcastify Calls pages (Washoe NSRS / TMFPD, system sid 11341).
-# Opened in the browser by the desktop UI. Never scraped as HLS.
+# Washoe NSRS / TMFPD Calls talkgroups (system sid 11341). Not listen feed IDs.
+# Played in-app via the listener session. Never sent to the HLS popout scraper.
+CALLS_SID = "11341"
 DEFAULT_CALLS = [
-    {
-        "id": "calls-11341-30433",
-        "name": "NSRS Washoe TMFPD Red Dispatch",
-        "talkgroups": ["30433"],
-        "urls": ["https://www.broadcastify.com/calls/tg/11341/30433"],
-    },
-    {
-        "id": "calls-11341-command",
-        "name": "TMFPD Command 1 + Command 2",
-        "talkgroups": ["30434", "30435"],
-        "urls": [
-            "https://www.broadcastify.com/calls/tg/11341/30434",
-            "https://www.broadcastify.com/calls/tg/11341/30435",
-        ],
-    },
-    {
-        "id": "calls-11341-tac",
-        "name": "TMFPD Tac 4–6",
-        "talkgroups": ["30436", "30437", "30438"],
-        "urls": [
-            "https://www.broadcastify.com/calls/tg/11341/30436",
-            "https://www.broadcastify.com/calls/tg/11341/30437",
-            "https://www.broadcastify.com/calls/tg/11341/30438",
-        ],
-    },
+    {"id": "calls-11341-30433", "name": "NSRS Washoe TMFPD Red Dispatch", "talkgroup": "30433"},
+    {"id": "calls-11341-30434", "name": "TMFPD Command 1", "talkgroup": "30434"},
+    {"id": "calls-11341-30435", "name": "TMFPD Command 2", "talkgroup": "30435"},
+    {"id": "calls-11341-30436", "name": "TMFPD Tac 4", "talkgroup": "30436"},
+    {"id": "calls-11341-30437", "name": "TMFPD Tac 5", "talkgroup": "30437"},
+    {"id": "calls-11341-30438", "name": "TMFPD Tac 6", "talkgroup": "30438"},
 ]
+
+
+_calls_jar = http.cookiejar.CookieJar()
+_calls_opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(_calls_jar))
+_calls_cursor: dict[str, dict] = {}
+_calls_audio: dict[str, str] = {}
+_PATH_TOKEN = re.compile(r"^[A-Za-z0-9_-]+$")
+_ENC_TOKEN = re.compile(r"^[A-Za-z0-9]+$")
+
+
+def listener_configured() -> bool:
+    user = os.environ.get("BROADCASTIFY_USERNAME", "").strip()
+    password = os.environ.get("BROADCASTIFY_PASSWORD", "").strip()
+    return bool(user and password)
+
+
+def call_audio_url(call: dict) -> str | None:
+    """CDN URL for one live call. Uses payload systemId, not the talkgroup sid."""
+    filename = str(call.get("filename") or "")
+    enc = str(call.get("enc") or "m4a")
+    system_id = str(call.get("systemId") or "")
+    hashv = str(call.get("hash") or "")
+    if not system_id.isdigit() or not _PATH_TOKEN.match(filename) or not _ENC_TOKEN.match(enc):
+        return None
+    if hashv and not _PATH_TOKEN.match(hashv):
+        return None
+    path = f"{hashv}/{system_id}/{filename}.{enc}" if hashv else f"{system_id}/{filename}.{enc}"
+    url = f"https://calls.broadcastify.com/{path}"
+    if not is_allowed_proxy_url(url) or not url.startswith("https://"):
+        return None
+    return url
+
+
+def _session_cookie() -> str:
+    for cookie in _calls_jar:
+        if cookie.name == "bcfyuser1" and cookie.value:
+            return cookie.value
+    return ""
+
+
+def _ensure_listener_session() -> str:
+    existing = _session_cookie()
+    if existing:
+        return existing
+    user = os.environ.get("BROADCASTIFY_USERNAME", "").strip()
+    password = os.environ.get("BROADCASTIFY_PASSWORD", "")
+    if not user or not password:
+        raise RuntimeError("listener login not configured")
+    body = urllib.parse.urlencode(
+        {
+            "username": user,
+            "password": password,
+            "action": "auth",
+            "redirect": "https://www.broadcastify.com",
+        }
+    ).encode()
+    req = urllib.request.Request(
+        "https://www.broadcastify.com/login/",
+        data=body,
+        headers={"User-Agent": UA, "Accept": "text/html", "Referer": REFERER},
+        method="POST",
+    )
+    with _calls_opener.open(req, timeout=30) as resp:
+        resp.read(256)
+    cookie = _session_cookie()
+    if not cookie:
+        raise RuntimeError("Broadcastify login failed")
+    return cookie
+
+
+def poll_talkgroup(talkgroup: str) -> dict:
+    tg = str(talkgroup).strip()
+    if not tg.isdigit():
+        raise ValueError("Invalid talkgroup")
+    cookie = _ensure_listener_session()
+    state = _calls_cursor.setdefault(
+        tg,
+        {"pos": 0.0, "do_init": True, "session_key": secrets.token_hex(16)},
+    )
+    form = urllib.parse.urlencode(
+        [
+            ("pos", f"{float(state['pos']):.3f}"),
+            ("doInit", "1" if state["do_init"] else "0"),
+            ("sessionKey", state["session_key"]),
+            ("systemId", CALLS_SID),
+            ("sid", "0"),
+            ("groups[]", f"{CALLS_SID}-{tg}"),
+        ]
+    ).encode()
+    req = urllib.request.Request(
+        "https://www.broadcastify.com/calls/apis/live-calls",
+        data=form,
+        headers={
+            "User-Agent": UA,
+            "Accept": "application/json",
+            "Content-Type": "application/x-www-form-urlencoded",
+            "Referer": "https://www.broadcastify.com/calls/",
+            "Origin": "https://www.broadcastify.com",
+            "Cookie": f"bcfyuser1={cookie}",
+        },
+        method="POST",
+    )
+    try:
+        with _calls_opener.open(req, timeout=30) as resp:
+            payload = json.loads(resp.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as e:
+        detail = e.read().decode("utf-8", errors="replace")
+        if "auth_required" in detail or "bad_session" in detail:
+            _calls_jar.clear()
+            raise RuntimeError("Calls session rejected") from e
+        raise RuntimeError(f"Calls poll HTTP {e.code}") from e
+    if isinstance(payload, dict) and payload.get("error") in ("auth_required", "bad_session"):
+        _calls_jar.clear()
+        raise RuntimeError("Calls session rejected")
+    calls_out = []
+    now = int(payload.get("serverTime") or 0)
+    fresh = bool(state["do_init"])
+    for call in payload.get("calls") or []:
+        if str(call.get("call_tg")) != tg:
+            continue
+        ts = int(call.get("ts") or 0)
+        if fresh and now and ts < now - 20:
+            continue
+        url = call_audio_url(call)
+        if not url:
+            continue
+        token = secrets.token_hex(8)
+        _calls_audio[token] = url
+        if len(_calls_audio) > 64:
+            _calls_audio.pop(next(iter(_calls_audio)))
+        calls_out.append(
+            {
+                "key": f"{call.get('id')}:{ts}:{call.get('filename')}",
+                "display": call.get("display") or call.get("descr") or f"TG {tg}",
+                "audio": f"/api/calls/audio/{token}",
+            }
+        )
+    last_pos = float(payload.get("lastPos") or 0)
+    if last_pos > 0:
+        state["pos"] = last_pos + 1.0
+    if payload.get("sessionKey"):
+        state["session_key"] = str(payload["sessionKey"])
+    state["do_init"] = False
+    return {"calls": calls_out}
+
+
+def fetch_call_audio(token: str) -> tuple[bytes, str]:
+    url = _calls_audio.get(token)
+    if not url or not url.startswith("https://calls.broadcastify.com/"):
+        raise ValueError("Unknown call audio")
+    cookie = _session_cookie()
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": UA,
+            "Referer": "https://www.broadcastify.com/calls/",
+            "Origin": "https://www.broadcastify.com",
+            "Accept": "*/*",
+            "Cookie": f"bcfyuser1={cookie}" if cookie else "",
+        },
+        method="GET",
+    )
+    with _calls_opener.open(req, timeout=30) as resp:
+        data = resp.read()
+        ctype = resp.headers.get("Content-Type", "audio/aac")
+        return data, ctype
 
 
 def normalize_listen_feed_id(feed_id: str) -> str:
@@ -216,6 +368,34 @@ class Handler(SimpleHTTPRequestHandler):
             self._send_json(200, {"feeds": DEFAULT_FEEDS, "calls": DEFAULT_CALLS})
             return
 
+        if path.startswith("/api/calls/poll/"):
+            tg = path[len("/api/calls/poll/") :]
+            try:
+                self._send_json(200, poll_talkgroup(tg))
+            except ValueError as e:
+                self._send_json(400, {"error": str(e)})
+            except RuntimeError as e:
+                self._send_json(503, {"error": str(e)})
+            except Exception as e:  # noqa: BLE001
+                self._send_json(502, {"error": str(e)})
+            return
+
+        if path.startswith("/api/calls/audio/"):
+            token = path[len("/api/calls/audio/") :]
+            if not re.fullmatch(r"[0-9a-f]+", token or ""):
+                self._send_json(400, {"error": "Invalid audio token"})
+                return
+            try:
+                data, ctype = fetch_call_audio(token)
+            except ValueError as e:
+                self._send_json(404, {"error": str(e)})
+                return
+            except Exception as e:  # noqa: BLE001
+                self._send_json(502, {"error": str(e)})
+                return
+            self._send_bytes(200, data, ctype or "audio/aac")
+            return
+
         if path.startswith("/api/stream/"):
             feed_id = path[len("/api/stream/") :]
             try:
@@ -283,7 +463,7 @@ def main() -> None:
     listen_ids = ", ".join(f["feedId"] for f in DEFAULT_FEEDS)
     calls_ids = ", ".join(c["id"] for c in DEFAULT_CALLS)
     print(f"Default listen feeds: {listen_ids}", flush=True)
-    print(f"Default Calls deep links (browser only): {calls_ids}", flush=True)
+    print(f"Default Calls talkgroups (in-app): {calls_ids}", flush=True)
     print("Press Ctrl+C to stop.", flush=True)
     try:
         httpd.serve_forever()
