@@ -104,4 +104,9 @@ class BroadcastifyParserTest {
         """.trimIndent()
         BroadcastifyParser.parsePopout(html, "14826")
     }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun parsePopout_rejectsCallsStyleId() {
+        BroadcastifyParser.parsePopout("<html></html>", "calls-11341-30433")
+    }
 }

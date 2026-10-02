@@ -140,6 +140,51 @@ input[type="range"] {
   color: var(--muted);
 }
 
+.feed-section {
+  grid-column: 1 / -1;
+  margin: 0.35rem 0 0;
+  padding-bottom: 0.35rem;
+  border-bottom: 2px solid rgba(63, 185, 80, 0.55);
+  font-size: 0.82rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: var(--text);
+}
+
+.feed-card-calls {
+  border-color: rgba(88, 166, 255, 0.65);
+}
+
+.calls-badge {
+  color: var(--info);
+  font-weight: 650;
+  margin-top: 0.2rem;
+}
+
+.calls-note,
+.calls-tgs {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.calls-tgs { color: var(--text); }
+
+.calls-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.status[data-status="calls"] {
+  color: var(--info);
+  border-color: #1f6feb;
+  background: rgba(88, 166, 255, 0.1);
+  text-transform: none;
+  letter-spacing: 0;
+}
+
 .feed-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));

@@ -22,7 +22,10 @@ UA = (
 )
 REFERER = "https://www.broadcastify.com/"
 
+# Classic listen feeds only. Calls talkgroups are NOT listen feed IDs and must
+# not be passed to fetch_feed_meta / the popout scraper.
 DEFAULT_FEEDS = [
+    {"feedId": "7364", "name": "Reno and Sparks Police and Fire"},
     {
         "feedId": "14826",
         "name": "East Placer and Nevada Counties CAL FIRE NEU - Kings Beach Area",
@@ -30,6 +33,44 @@ DEFAULT_FEEDS = [
     {"feedId": "47365", "name": "CAL FIRE NEU West"},
     {"feedId": "47367", "name": "Tahoe National Forest West"},
 ]
+
+# Public Broadcastify Calls pages (Washoe NSRS / TMFPD, system sid 11341).
+# Opened in the browser by the desktop UI. Never scraped as HLS.
+DEFAULT_CALLS = [
+    {
+        "id": "calls-11341-30433",
+        "name": "NSRS Washoe TMFPD Red Dispatch",
+        "talkgroups": ["30433"],
+        "urls": ["https://www.broadcastify.com/calls/tg/11341/30433"],
+    },
+    {
+        "id": "calls-11341-command",
+        "name": "TMFPD Command 1 + Command 2",
+        "talkgroups": ["30434", "30435"],
+        "urls": [
+            "https://www.broadcastify.com/calls/tg/11341/30434",
+            "https://www.broadcastify.com/calls/tg/11341/30435",
+        ],
+    },
+    {
+        "id": "calls-11341-tac",
+        "name": "TMFPD Tac 4–6",
+        "talkgroups": ["30436", "30437", "30438"],
+        "urls": [
+            "https://www.broadcastify.com/calls/tg/11341/30436",
+            "https://www.broadcastify.com/calls/tg/11341/30437",
+            "https://www.broadcastify.com/calls/tg/11341/30438",
+        ],
+    },
+]
+
+
+def normalize_listen_feed_id(feed_id: str) -> str:
+    """Accept only a numeric listen feed id. Do not strip letters out of a Calls id."""
+    fid = str(feed_id).strip()
+    if not fid.isdigit():
+        raise ValueError("Invalid listen feedId")
+    return fid
 
 _HLS_RE = re.compile(r'hlsUrl:\s*"((?:\\.|[^"\\])*)"')
 _NAME_RE = re.compile(r'feedName:\s*"((?:\\.|[^"\\])*)"')
@@ -42,9 +83,7 @@ def unescape_jsonish(s: str) -> str:
 
 
 def fetch_feed_meta(feed_id: str) -> dict:
-    fid = re.sub(r"\D", "", str(feed_id))
-    if not fid:
-        raise ValueError("Invalid feedId")
+    fid = normalize_listen_feed_id(feed_id)
 
     url = f"https://www.broadcastify.com/listen/feed/popout.php?feedId={fid}"
     req = urllib.request.Request(
@@ -174,7 +213,7 @@ class Handler(SimpleHTTPRequestHandler):
         path = parsed.path.rstrip("/") or "/"
 
         if path == "/api/feeds":
-            self._send_json(200, {"feeds": DEFAULT_FEEDS})
+            self._send_json(200, {"feeds": DEFAULT_FEEDS, "calls": DEFAULT_CALLS})
             return
 
         if path.startswith("/api/stream/"):
@@ -241,7 +280,10 @@ def main() -> None:
 
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
     print(f"Somersett Fire Radio Scanner listening at http://{HOST}:{PORT}", flush=True)
-    print(f"Default feeds: {', '.join(f['feedId'] for f in DEFAULT_FEEDS)}", flush=True)
+    listen_ids = ", ".join(f["feedId"] for f in DEFAULT_FEEDS)
+    calls_ids = ", ".join(c["id"] for c in DEFAULT_CALLS)
+    print(f"Default listen feeds: {listen_ids}", flush=True)
+    print(f"Default Calls deep links (browser only): {calls_ids}", flush=True)
     print("Press Ctrl+C to stop.", flush=True)
     try:
         httpd.serve_forever()

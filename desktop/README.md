@@ -33,12 +33,18 @@ No installer, no Node, no virtualenv. PyInstaller packaging is optional later if
 
 ## Default feeds
 
-| ID | Name |
-|----|------|
-| 14826 | East Placer / Nevada CAL FIRE NEU (Kings Beach / Truckee) |
-| 47365 | CAL FIRE NEU West |
-| 47367 | Tahoe National Forest West |
+Same order as the Android app. **Nevada / Washoe** is the top group; **California / NEU–TNF** stays below.
 
-Use **＋** in the header to add another feed by Broadcastify feed ID.
+| Group | Kind | ID | Name |
+|----|------|----|------|
+| Nevada / Washoe | Calls (opens browser) | TG 30433 | NSRS Washoe TMFPD Red Dispatch |
+| Nevada / Washoe | Calls (opens browser) | TG 30434, 30435 | TMFPD Command 1 + Command 2 |
+| Nevada / Washoe | Calls (opens browser) | TG 30436–30438 | TMFPD Tac 4–6 |
+| Nevada / Washoe | Listen | 7364 | Reno and Sparks Police and Fire |
+| California / NEU–TNF | Listen | 14826 | East Placer / Nevada CAL FIRE NEU (Kings Beach / Truckee) |
+| California / NEU–TNF | Listen | 47365 | CAL FIRE NEU West |
+| California / NEU–TNF | Listen | 47367 | Tahoe National Forest West |
+
+Calls cards are labeled **Calls (opens Broadcastify)** and open the public talkgroup pages. They are not sent to `/api/stream`. **Play all** starts listen feeds only. Use **＋** in the header to add another listen feed by numeric Broadcastify feed ID.
 
 See the repo root README for HLS/JWT details, preroll, and scanner-awareness notes.

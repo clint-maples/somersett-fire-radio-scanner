@@ -20,8 +20,8 @@ object BroadcastifyParser {
     }
 
     fun parsePopout(html: String, feedId: String): FeedMeta {
-        val id = feedId.filter { it.isDigit() }
-        require(id.isNotEmpty()) { "Invalid feedId" }
+        val id = feedId.trim()
+        require(id.isNotEmpty() && id.all { it.isDigit() }) { "Invalid listen feedId" }
 
         val hlsMatch = HLS_RE.find(html)
             ?: throw IllegalStateException(
@@ -35,7 +35,7 @@ object BroadcastifyParser {
 
         val name = NAME_RE.find(html)?.let { unescapeJsonish(it.groupValues[1]) }
             ?: TITLE_RE.find(html)?.groupValues?.get(1)?.trim()
-            ?: DefaultFeeds.ALL.firstOrNull { it.feedId == id }?.name
+            ?: DefaultFeeds.knownListen(id)?.name
             ?: "Feed $id"
 
         return FeedMeta(feedId = id, name = name, hlsUrl = hlsUrl)

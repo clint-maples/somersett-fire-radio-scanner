@@ -27,6 +27,25 @@ class RewriteTests(unittest.TestCase):
         self.assertFalse(server.is_allowed_proxy_url("https://evil.example/x"))
         self.assertFalse(server.is_allowed_proxy_url("file:///etc/passwd"))
 
+    def test_default_listen_feeds_are_not_calls_talkgroups(self) -> None:
+        ids = [feed["feedId"] for feed in server.DEFAULT_FEEDS]
+        self.assertEqual(ids, ["7364", "14826", "47365", "47367"])
+        talkgroups = {"30433", "30434", "30435", "30436", "30437", "30438"}
+        self.assertTrue(talkgroups.isdisjoint(ids))
+        self.assertEqual(
+            [call["talkgroups"] for call in server.DEFAULT_CALLS],
+            [["30433"], ["30434", "30435"], ["30436", "30437", "30438"]],
+        )
+        for call in server.DEFAULT_CALLS:
+            self.assertFalse(str(call["id"]).isdigit())
+            for url in call["urls"]:
+                self.assertIn("/calls/tg/11341/", url)
+
+    def test_listen_id_rejects_calls_card_id(self) -> None:
+        with self.assertRaises(ValueError):
+            server.normalize_listen_feed_id("calls-11341-30433")
+        self.assertEqual(server.normalize_listen_feed_id("7364"), "7364")
+
     def test_unescape(self) -> None:
         self.assertEqual(
             server.unescape_jsonish(r"https:\/\/hls-o2.broadcastify.com\/t\/x"),
